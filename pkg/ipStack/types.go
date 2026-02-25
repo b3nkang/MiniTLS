@@ -1,4 +1,4 @@
-package ipstack
+package ipStack
 
 import (
 	"net"
@@ -11,8 +11,8 @@ import (
 	- List of fwding table entries to iterate through
 */
 type IPStack struct {
-	Interfaces			map[string]*Interface  	// “if0” : Interface()
-	ForwardingTable 	[]FwdEntry
+	Interfaces			map[string]*Interface  	/* “if0” : Interface() */
+	ForwardingTable 	map[netip.Prefix]FwdEntry
 }
 
 /*
@@ -20,7 +20,7 @@ type IPStack struct {
 */
 type Neighbour struct {
 	IP  		netip.Addr 			// virtual IP (10.2.0.3)
-	UDPAddr		net.UDPAddr   		// real UDP addr (127.0.0.1:5006)
+	UDPAddr		netip.AddrPort   	/* convert to net.UDPAddr when needed */
 }
 
 /*
@@ -49,9 +49,25 @@ const (
 	Use InterfaceName after prefix matching to access IPStack's Interfaces list
 */
 type FwdEntry struct {
-	Prefix			netip.Addr		/* ex: 10.2.0.1/24 */
+	Prefix			netip.Prefix		/* ex: 10.2.0.1/24 */
 	NextHop   		netip.Addr		/* zero if directly connected */
 	InterfaceName 	string   		/* ex: "ifo" */
 	Type	   		int				/* Direct or RIP (routers) */
+	Cost 			int 			/* for RIP */
 }
+
+/*
+Will also need a data structure for RIP to accommodate these fields in Config:
+
+routing rip
+
+# Neighbor routers that should be sent RIP messages
+rip advertise-to 10.1.0.2
+
+# Timing parameters for RIP
+rip periodic-update-rate 5000 # in milliseconds
+rip route-timeout-threshold 12000 # in milliseconds
+
+
+*/
 

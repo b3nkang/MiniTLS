@@ -18,7 +18,7 @@ func (stack *IPStack) Init(config *lnxconfig.IPConfig) error {
 	/* Initialize Interfaces */
 	for _, ifx := range config.Interfaces {
 		/* init udp conn for link layer */
-		conn, err := net.ListenUDP("udp", &net.UDPAddr{
+		conn, err := net.ListenUDP("udp4", &net.UDPAddr{
 			IP: net.IP(ifx.UDPAddr.Addr().AsSlice()), 	/* convert netip.Addr -> net.IP */
 			Port: int(ifx.UDPAddr.Port()),
 		})

@@ -5,10 +5,13 @@ go 1.21
 require github.com/pkg/errors v0.9.1
 
 require (
+	github.com/brown-csci1680/iptcp-headers v0.0.0-20230924161227-ebbbbba41fe3 // indirect
 	github.com/clipperhouse/displaywidth v0.6.2 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.3.0 // indirect
 	github.com/fatih/color v1.18.0 // indirect
+	github.com/google/btree v1.1.3 // indirect
+	github.com/google/netstack v0.0.0-20191123085552-55fcc16cd0eb // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.19 // indirect

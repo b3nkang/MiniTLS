@@ -1,4 +1,4 @@
-package ipStack
+package linkLayer
 
 import (
 	"fmt"
@@ -134,11 +134,11 @@ func ComputeChecksum(b []byte) uint16 {
 	return checksumInv
 }
 
-/* Just a simple data structure for an IP Packet (header and message) */
-type IPPacket struct {
-	Header *ipv4header.IPv4Header
-	Data []byte /* message field */
-}
+// /* Just a simple data structure for an IP Packet (header and message) */
+// type IPPacket struct {
+// 	Header *ipv4header.IPv4Header
+// 	Data []byte /* message field */
+// }
 
 
 /*

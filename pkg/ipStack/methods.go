@@ -3,6 +3,7 @@ package ipStack
 import (
 	"errors"
 	"fmt"
+	ll "ip-isabelle-and-ben/pkg/linkLayer"
 	"ip-isabelle-and-ben/pkg/lnxconfig"
 	"log"
 	"net"
@@ -18,9 +19,9 @@ func InitIPStackFromConfig(fileName string)(*IPStack, error) {
 	}
 	
 	ipStack := &IPStack{
-		Interfaces:      make(map[string]*Interface),
+		Interfaces:      make(map[string]*ll.Interface),
 		ForwardingTable: make(map[netip.Prefix]FwdEntry, 0),
-		IncomingPackets: make(chan IPPacket, 100),
+		IncomingPackets: make(chan ll.IPPacket, 100),
 	}
 
 	/* initialize structs within this IPStack */
@@ -46,12 +47,12 @@ func (stack *IPStack) Init(config *lnxconfig.IPConfig) error {
 			return err
 		}
 		/* create and fill in interface struct--neighbors empty for now */
-		iface := &Interface{
+		iface := &ll.Interface{
 			Name: ifx.Name,
 			Prefix: ifx.AssignedPrefix,
 			IP: ifx.AssignedIP,
 			Conn: conn,
-			Neighbours: make(map[netip.Addr]Neighbour),
+			Neighbours: make(map[netip.Addr]ll.Neighbour),
 		}
 		
 		stack.Interfaces[ifx.Name] = iface
@@ -63,7 +64,7 @@ func (stack *IPStack) Init(config *lnxconfig.IPConfig) error {
 		if !ok {
 			log.Printf("Neighbor %s contains unknown interface: %s", n.DestAddr, n.InterfaceName)
 		}
-		neighbor := Neighbour{
+		neighbor := ll.Neighbour{
 			IP: n.DestAddr, 	/* netip.Addr */
 			UDPAddr: n.UDPAddr, /* net.UDPAddr */
 		}
@@ -78,7 +79,7 @@ func (stack *IPStack) Init(config *lnxconfig.IPConfig) error {
 
 	/* start listeners for each interface */
 	for _, iface := range stack.Interfaces {
-		go LinkLayerListen(iface.Conn, stack.IncomingPackets)
+		go ll.LinkLayerListen(iface.Conn, stack.IncomingPackets)
 	}
 
 	return nil
@@ -156,7 +157,7 @@ func (stack *IPStack) SendIP(dest netip.Addr, message string) error {
 	}
 	sourceIP := stack.Interfaces["if0"].IP
 	
-	LinkLayerSend(myConn, destUDPAddr, sourceIP, dest, message, 0)
+	ll.LinkLayerSend(myConn, destUDPAddr, sourceIP, dest, message, 0)
 
 	return nil
 }

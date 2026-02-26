@@ -124,11 +124,11 @@ func (stack *IPStack) InitFwdTable(config *lnxconfig.IPConfig) error {
 
 /* Run the IP Layer (handle and process messages) */
 func (stack *IPStack) RunIPLayer() {
-	fmt.Println("Running IP Layer...")
+	// fmt.Println("Running IP Layer...")
 	for packet := range stack.IncomingPackets {
-		fmt.Println("blocking - runIplayer")
-		fmt.Printf("IP Layer got this packet too: %s\nHeader:  %v\nChecksum:  %s\nMessage:  %s\n",
-			packet.Header.Src.String(), packet.Header, packet.Header.Checksum, string(packet.Data))
+		fmt.Printf("IP Layer received validated packet from %s\n", packet.Header.Src.String())
+		// fmt.Printf("IP Layer got this packet too: %s\nHeader:  %v\nChecksum:  %s\nMessage:  %s\n",
+		// 	packet.Header.Src.String(), packet.Header, packet.Header.Checksum, string(packet.Data))
 	}
 }
 

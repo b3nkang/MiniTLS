@@ -63,7 +63,7 @@ func LinkLayerSend(conn *net.UDPConn, udpDest *net.UDPAddr, source netip.Addr, d
 
 
 /* what to run to constantly listen for new messages on your UDP port */
-func LinkLayerListen(conn *net.UDPConn, packetChannel chan IPPacket) error {
+func LinkLayerListen(conn *net.UDPConn, ipStackChan chan IPPacket) error {
 	for {
 		buffer := make([]byte, MaxMessageSize)
 
@@ -90,30 +90,25 @@ func LinkLayerListen(conn *net.UDPConn, packetChannel chan IPPacket) error {
 		computedChecksum := ValidateChecksum(headerBytes, checksumFromHeader)
 
 		/* determine if we passed or failed checksum */
-		var checksumState string
 		if computedChecksum == checksumFromHeader {
-			checksumState = "OK"
 			fmt.Println("Checksum passed")
 		} else {
-			checksumState = "FAIL"
-			fmt.Println("Checksum failed")
+			fmt.Printf("Checksum failed, dropping packet from %s\n", sourceAddr.String())
+			continue // drop the packet just by continuing
 		}
-
-		/* TODO: what are we supposed to do if checksum fails? */
 
 		/* Next, get the message, which starts after the header */
 		message := buffer[headerSize:]
 
 		/* print out all the stuff */
-		fmt.Printf("Received IP packet from %s\nHeader:  %v\nChecksum:  %s\nMessage:  %s\n",
-			sourceAddr.String(), hdr, checksumState, string(message))
-
+		fmt.Printf("Received IP packet from %s\nHeader:  %v\nChecksum:  PASSED\nMessage:  %s\n",
+			sourceAddr.String(), hdr, string(message))
 		/* build an IPPacket and send to IPStack */
 		packet := IPPacket{
 			Header: hdr,
 			Data: message,
 		}
-		packetChannel <- packet
+		ipStackChan <- packet
 	}
 }
 

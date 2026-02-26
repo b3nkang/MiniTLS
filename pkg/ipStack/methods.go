@@ -20,6 +20,7 @@ func InitIPStackFromConfig(fileName string)(*IPStack, error) {
 	ipStack := &IPStack{
 		Interfaces:      make(map[string]*Interface),
 		ForwardingTable: make(map[netip.Prefix]FwdEntry, 0),
+		IncomingPackets: make(chan IPPacket, 100),
 	}
 
 	/* initialize structs within this IPStack */
@@ -70,7 +71,7 @@ func (stack *IPStack) Init(config *lnxconfig.IPConfig) error {
 		iface.Neighbours[n.DestAddr] = neighbor
 	}
 
-	err := stack.initFwdTable(config)
+	err := stack.InitFwdTable(config)
 	if err != nil {
 		return err
 	}
@@ -84,7 +85,7 @@ func (stack *IPStack) Init(config *lnxconfig.IPConfig) error {
 }
 
 /* Initialize forwarding table based on RoutingMode */
-func (stack *IPStack) initFwdTable(config *lnxconfig.IPConfig) error {
+func (stack *IPStack) InitFwdTable(config *lnxconfig.IPConfig) error {
 	switch config.RoutingMode {
 		/* case: host */
 		case lnxconfig.RoutingTypeStatic:
@@ -123,7 +124,9 @@ func (stack *IPStack) initFwdTable(config *lnxconfig.IPConfig) error {
 
 /* Run the IP Layer (handle and process messages) */
 func (stack *IPStack) RunIPLayer() {
+	fmt.Println("Running IP Layer...")
 	for packet := range stack.IncomingPackets {
+		fmt.Println("blocking - runIplayer")
 		fmt.Printf("IP Layer got this packet too: %s\nHeader:  %v\nChecksum:  %s\nMessage:  %s\n",
 			packet.Header.Src.String(), packet.Header, packet.Header.Checksum, string(packet.Data))
 	}

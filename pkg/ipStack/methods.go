@@ -93,10 +93,21 @@ func (stack *IPStack) initFwdTable(config *lnxconfig.IPConfig) error {
 					Prefix: iface.Prefix,
 					NextHop: netip.Addr{}, /* empty = LOCAL */
 					InterfaceName: iface.Name,
-					/* no need to define Type (not a router) */
-					/* no need to define Cost (not a router) */
+					Type: SourceTypeLocal,
+					Cost: 0,
 				}
 				stack.ForwardingTable[iface.Prefix] = entry
+			}
+			/* add default/static routes on host */
+			for prefix, address := range config.StaticRoutes {
+				entry := FwdEntry{
+					Prefix: prefix,
+					NextHop: address,
+					/* no interface name */
+					Type: SourceTypeStatic,
+					/* no cost */
+				}
+				stack.ForwardingTable[entry.Prefix] = entry
 			}
 		/* case: router */
 		case lnxconfig.RoutingTypeRIP:
@@ -106,7 +117,7 @@ func (stack *IPStack) initFwdTable(config *lnxconfig.IPConfig) error {
 					Prefix: iface.Prefix,
 					NextHop: netip.Addr{}, /* empty = LOCAL */
 					InterfaceName: iface.Name,
-					Type: SourceTypeDirect,
+					Type: SourceTypeLocal,
 					Cost: 0, /* all local interfaces have cost = 0*/
 				}
 				stack.ForwardingTable[iface.Prefix] = entry
@@ -119,6 +130,8 @@ func (stack *IPStack) initFwdTable(config *lnxconfig.IPConfig) error {
 		}
 	return nil
 }
+
+
 
 
 /* Run the IP Layer (handle and process messages) */

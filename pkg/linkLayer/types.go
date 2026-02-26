@@ -3,8 +3,6 @@ package linkLayer
 import (
 	"net"
 	"net/netip"
-
-	ipv4header "github.com/brown-csci1680/iptcp-headers"
 )
 
 /*
@@ -15,7 +13,7 @@ type Interface struct {
 	Name  		string								/* ex: "if0" */
 	Prefix		netip.Prefix 						/* 10.2.0.1/24 */
 	IP 			netip.Addr
-	Conn  		*net.UDPConn  							/* opened UDP socket */
+	Conn  		*net.UDPConn  						/* opened UDP socket */
 	Neighbours 	map[netip.Addr]Neighbour
 }
 
@@ -29,7 +27,7 @@ type Neighbour struct {
 
 /* Just a simple data structure for an IP Packet (header and message) */
 type IPPacket struct {
-	Header *ipv4header.IPv4Header
+	SrcIfaceAddr *net.UDPAddr /* the interface this packet came in on */
 	Data []byte /* message field */
 }
 

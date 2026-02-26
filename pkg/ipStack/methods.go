@@ -5,9 +5,12 @@ import (
 	"fmt"
 	ll "ip-isabelle-and-ben/pkg/linkLayer"
 	"ip-isabelle-and-ben/pkg/lnxconfig"
+	utils "ip-isabelle-and-ben/pkg/protocol"
 	"log"
 	"net"
 	"net/netip"
+
+	ipv4header "github.com/brown-csci1680/iptcp-headers"
 )
 
 /* Not a method *ON* IPstack, but shared between host and router */
@@ -79,7 +82,7 @@ func (stack *IPStack) Init(config *lnxconfig.IPConfig) error {
 
 	/* start listeners for each interface */
 	for _, iface := range stack.Interfaces {
-		go ll.LinkLayerListen(iface.Conn, stack.IncomingPackets)
+		go iface.LinkLayerListen(stack.IncomingPackets)
 	}
 
 	return nil
@@ -127,9 +130,42 @@ func (stack *IPStack) InitFwdTable(config *lnxconfig.IPConfig) error {
 func (stack *IPStack) RunIPLayer() {
 	// fmt.Println("Running IP Layer...")
 	for packet := range stack.IncomingPackets {
-		fmt.Printf("IP Layer received validated packet from %s\n", packet.Header.Src.String())
+		// fmt.Printf("IP Layer received validated packet from %s\n", packet.Header.Src.String())
 		// fmt.Printf("IP Layer got this packet too: %s\nHeader:  %v\nChecksum:  %s\nMessage:  %s\n",
 		// 	packet.Header.Src.String(), packet.Header, packet.Header.Checksum, string(packet.Data))
+
+		/* Marshal the received byte array into a UDP header
+		NOTE:  This does not validate the checksum or check any fields */
+		hdr, err := ipv4header.ParseHeader(packet.Data)
+
+		if err != nil {
+			/* drop packet if parsing doesn't work */
+			fmt.Println("Error parsing header", err)
+			continue
+		}
+
+		/* extract and validate checksum */
+		headerSize := hdr.Len
+		headerBytes := packet.Data[:headerSize]
+		checksumFromHeader := uint16(hdr.Checksum)
+		computedChecksum := utils.ValidateChecksum(headerBytes, checksumFromHeader)
+
+		/* determine if we passed or failed checksum */
+		if computedChecksum == checksumFromHeader {
+			fmt.Println("Checksum passed")
+		} else {
+			fmt.Printf("Checksum failed, dropping packet from %s\n", packet.SrcIfaceAddr.String())
+			continue // drop the packet just by continuing
+		}
+
+		/* Next, get the message, which starts after the header */
+		message := packet.Data[headerSize:]
+
+		/* print out all the stuff */
+		fmt.Printf("[IP] Received IP packet from %s\nHeader:  %v\nChecksum:  PASSED\nMessage:  %s\n",
+			packet.SrcIfaceAddr.String(), hdr, string(message))
+
+		// do stuff now.
 	}
 }
 
@@ -146,7 +182,7 @@ func (stack *IPStack) SendIP(dest netip.Addr, message string) error {
 	/* hardcode fields that will come from forwarding and neighbor table for now */
 
 	/* conn for this stack's if0 (assume h1) */
-	myConn := stack.Interfaces["if0"].Conn
+	myIf := stack.Interfaces["if0"]
 
 	/* string for r1's IP and port */
 	destStringAddr := "127.0.0.1:5001"
@@ -157,12 +193,7 @@ func (stack *IPStack) SendIP(dest netip.Addr, message string) error {
 	}
 	sourceIP := stack.Interfaces["if0"].IP
 	
-	ll.LinkLayerSend(myConn, destUDPAddr, sourceIP, dest, message, 0)
+	myIf.LinkLayerSend(myIf.Conn, destUDPAddr, sourceIP, dest, message, 0)
 
 	return nil
 }
-
-
-
-
-

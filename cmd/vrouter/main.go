@@ -4,8 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"ip-isabelle-and-ben/pkg/ipStack"
-	"ip-isabelle-and-ben/pkg/lnxconfig"
-	"net/netip"
+	// "ip-isabelle-and-ben/pkg/lnxconfig"
+	// "net/netip"
 	"os"
 )
 
@@ -21,7 +21,7 @@ func main() {
 	}
 
 	/* initialize IP stack */
-	ipStack, err := InitIPStackFromConfig(*configPath)
+	ipStack, err := ipStack.InitIPStackFromConfig(*configPath)
 	if err != nil {
 		fmt.Println("Error initializing IP Stack: %s", err.Error())
 		os.Exit(1)
@@ -30,25 +30,15 @@ func main() {
 	ipStack.PrintForwardingTable()
 	ipStack.PrintInterfaces()
 
+
+	/* start handling IP messages */
+	go ipStack.RunIPLayer()
+
+	/* start REPL */
+	ipStack.StartREPL()
+
+	/* run forever */
+	select{}
+
 }
 
-func InitIPStackFromConfig(fileName string)(*ipStack.IPStack, error) {
-	/* parse lnx file */
-	lnxConfig, err := lnxconfig.ParseConfig(fileName)
-	if err != nil {
-		return nil, err
-	}
-	
-	ipStack := &ipStack.IPStack{
-		Interfaces:      make(map[string]*ipStack.Interface),
-		ForwardingTable: make(map[netip.Prefix]ipStack.FwdEntry, 0),
-	}
-
-	/* initialize structs within this IPStack */
-	err = ipStack.Init(lnxConfig)
-	if err != nil {
-		return nil, err
-	}
-
-	return ipStack, nil;
-}

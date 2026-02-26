@@ -13,6 +13,7 @@ import (
 type IPStack struct {
 	Interfaces			map[string]*Interface  	/* “if0” : Interface() */
 	ForwardingTable 	map[netip.Prefix]FwdEntry
+	IncomingPackets 	chan IPPacket
 }
 
 /*
@@ -30,8 +31,9 @@ type Neighbour struct {
 type Interface struct {
 	Name  		string								/* ex: "if0" */
 	Prefix		netip.Prefix 						/* 10.2.0.1/24 */
-	Conn  		net.Conn  							/* opened UDP socket */
-	Neighbours 	map[netip.Addr]Neighbour		
+	IP 			netip.Addr
+	Conn  		*net.UDPConn  							/* opened UDP socket */
+	Neighbours 	map[netip.Addr]Neighbour
 }
 
 /*

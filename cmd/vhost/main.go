@@ -31,7 +31,7 @@ func main() {
 	fmt.Println("Forwarding Table")
 	ipStack.PrintForwardingTable()
 	fmt.Println("Interfaces")
-	ipStack.PrintInterfaces()
+	ipStack.PrintInterfacesForDebugging()
 
 	/* start handling IP messages */
 	go ipStack.RunIPLayer()

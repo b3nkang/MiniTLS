@@ -18,13 +18,15 @@ type IPStack struct {
 }
 
 /*
-	For entries in Routers' Forwarding Table
+	For entries in Forwarding Table
 	- Direct = directly connected via local interface
 	- RIP = learned about through RIP--routed through multiple hops
+	- Static = used to specify default route for hosts
 */
 const (
-	SourceTypeDirect = 0
+	SourceTypeLocal = 0
 	SourceTypeRIP = 1
+	SourceTypeStatic = 2
 )
 
 /* 

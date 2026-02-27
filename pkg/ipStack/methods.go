@@ -98,10 +98,21 @@ func (stack *IPStack) InitFwdTable(config *lnxconfig.IPConfig) error {
 					Prefix: iface.Prefix,
 					NextHop: netip.Addr{}, /* empty = LOCAL */
 					InterfaceName: iface.Name,
-					/* no need to define Type (not a router) */
-					/* no need to define Cost (not a router) */
+					Type: SourceTypeLocal,
+					Cost: 0,
 				}
 				stack.ForwardingTable[iface.Prefix] = entry
+			}
+			/* add default/static routes on host */
+			for prefix, address := range config.StaticRoutes {
+				entry := FwdEntry{
+					Prefix: prefix,
+					NextHop: address,
+					/* no interface name */
+					Type: SourceTypeStatic,
+					/* no cost */
+				}
+				stack.ForwardingTable[entry.Prefix] = entry
 			}
 		/* case: router */
 		case lnxconfig.RoutingTypeRIP:
@@ -111,7 +122,7 @@ func (stack *IPStack) InitFwdTable(config *lnxconfig.IPConfig) error {
 					Prefix: iface.Prefix,
 					NextHop: netip.Addr{}, /* empty = LOCAL */
 					InterfaceName: iface.Name,
-					Type: SourceTypeDirect,
+					Type: SourceTypeLocal,
 					Cost: 0, /* all local interfaces have cost = 0*/
 				}
 				stack.ForwardingTable[iface.Prefix] = entry
@@ -124,6 +135,8 @@ func (stack *IPStack) InitFwdTable(config *lnxconfig.IPConfig) error {
 		}
 	return nil
 }
+
+
 
 /* Highest-level send function on IP Stack, called by REPL. Internal sends use iface.LinkLayerSend(). */
 /* Send a message on the IP Layer HARDCODED H1 -> R1 TODO: update to not be hardcoded */
@@ -201,7 +214,7 @@ func (ipStack *IPStack) RunIPLayer() {
 		fmt.Printf("[IP] Longest prefix match found on %s\n", entry.InterfaceName)
 		// check how to forward
 		switch entry.Type {
-		case SourceTypeDirect:
+		case SourceTypeLocal:
 			// if direct, seek through neighbours and send 
 			fmt.Printf("[IP] Match is directly connected. Forwarding to destination %s\n", hdr.Dst.String())
 			iface := ipStack.Interfaces[entry.InterfaceName]

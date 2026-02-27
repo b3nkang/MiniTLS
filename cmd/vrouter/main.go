@@ -28,7 +28,7 @@ func main() {
 	}
 
 	ipStack.PrintForwardingTable()
-	ipStack.PrintInterfaces()
+	ipStack.PrintInterfacesForDebugging()
 
 
 	/* start handling IP messages */
@@ -36,9 +36,5 @@ func main() {
 
 	/* start REPL */
 	ipStack.StartREPL()
-
-	/* run forever */
-	select{}
-
 }
 

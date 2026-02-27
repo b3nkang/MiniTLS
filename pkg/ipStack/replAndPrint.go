@@ -58,17 +58,112 @@ func (stack *IPStack) handleCommand(line string) {
 		if err != nil {
 			fmt.Println("Send error:", err)
 		}
-	/* edit based on what the actual "quit" requiremet is */
+	/* list interfaces */
+	case "li":
+		stack.ListInterfaces()
+	/* list neighbors */
+	case "ln":
+		stack.ListNeighbors()
+	/* list routes */
+	case "lr":
+		stack.ListRoutes()
+	/* disable interface down <ifname> */
+	// case "down":
+	/* enable interface up <ifname> */
+	// case "up":
+	/* not an actual requirement */
 	case "q":
 		os.Exit(0)
-
 	default:
 		fmt.Println("Unknown command")
 	}
 }
 
-/* Print the Interface table */
-func (stack *IPStack) PrintInterfaces() {
+/* "LI" command */
+func (stack *IPStack) ListInterfaces() {
+	table := tablewriter.NewWriter(os.Stdout)
+    table.Header([]string{"Iface", "VIP", "UDPAddr"})
+
+    for _, iface := range stack.Interfaces {
+		UDPAddr := iface.Conn.LocalAddr().String()
+        table.Append([]string{
+            iface.Name,
+			iface.IP.String(),
+			UDPAddr,
+        })
+    }
+	/* print out table */
+    table.Render()
+}
+
+/* "LN" command */
+func (stack *IPStack) ListNeighbors() {
+	table := tablewriter.NewWriter(os.Stdout)
+    table.Header([]string{"Iface", "VIP", "UDPAddr"})
+	/* go through each connected interface's neighbors to print all neighbors */
+    for _, iface := range stack.Interfaces {
+		ifaceName := iface.Name
+		for neighborIP, neighbor := range iface.Neighbours {
+			table.Append([]string{
+				ifaceName,
+				neighborIP.String(),
+				neighbor.UDPAddr.String(),
+			})
+		}
+    }
+	/* print out table */
+    table.Render()
+}
+
+/* "LR" command */
+func (stack *IPStack) ListRoutes() {
+	table := tablewriter.NewWriter(os.Stdout)
+	table.Header([]string{"T", "Prefix", "Next hop", "Cost"})
+
+	for _, e := range stack.ForwardingTable {
+		/* type */
+		typeStr := typeToLetter(e.Type)
+
+		/* next hop */
+		var nextHopStr string
+		if e.Type == SourceTypeLocal {
+			nextHopStr = "LOCAL:" + e.InterfaceName
+		} else {
+			nextHopStr = e.NextHop.String()
+		}
+
+		/* cost */
+		var costStr string
+		if e.Type == SourceTypeStatic {
+			costStr = "-" /* default/static routes */
+		} else {
+			costStr = fmt.Sprint(e.Cost)
+		}
+		table.Append([]string{
+			typeStr,
+			e.Prefix.String(),
+			nextHopStr,
+			costStr,
+		})
+	}
+	table.Render()
+}
+/* get appropriate letter for table */
+func typeToLetter(t int) string {
+	switch t {
+	case SourceTypeLocal:
+		return "L"
+	case SourceTypeStatic:
+		return "S"
+	case SourceTypeRIP:
+		return "R"
+	default:
+		return "?"
+	}
+}
+
+/* Print the Interface table DEBUGGING */
+func (stack *IPStack) PrintInterfacesForDebugging() {
     table := tablewriter.NewWriter(os.Stdout)
     table.Header([]string{"Name", "Prefix", "Neighbors"})
 
@@ -87,16 +182,21 @@ func (stack *IPStack) PrintInterfaces() {
     table.Render()
 }
 
-/* Print Forwarding Table */
+/* Print Forwarding Table DEBUGGING */
 func (stack *IPStack) PrintForwardingTable() {
     table := tablewriter.NewWriter(os.Stdout)
     table.Header([]string{"Prefix", "NextHop", "Iface", "Type", "Cost"})
 
     for _, e := range stack.ForwardingTable {
+		ifaceStr := "-"
+		if e.InterfaceName != "" {
+			ifaceStr = e.InterfaceName
+		}
+
         table.Append([]string{
             e.Prefix.String(),
             e.NextHop.String(),
-            e.InterfaceName,
+            ifaceStr, /* may not be there */
             fmt.Sprint(e.Type),
 			fmt.Sprint(e.Cost),
         })

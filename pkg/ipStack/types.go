@@ -11,6 +11,7 @@ import (
 	- List of fwding table entries to iterate through
 */
 type IPStack struct {
+	// potentially consider adding a field "name" e.g. "H1" or "R1" for debugging purposes even if not strictly correct
 	Interfaces			map[string]*ll.Interface  	/* “if0” : Interface() */
 	ForwardingTable 	map[netip.Prefix]FwdEntry
 	IncomingPacketChan 	chan ll.IPPacket

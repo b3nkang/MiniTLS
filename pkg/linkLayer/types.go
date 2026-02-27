@@ -26,8 +26,10 @@ type Neighbour struct {
 }
 
 /* Just a simple data structure for an IP Packet (header and message) */
-type IPPacket struct {
-	SrcIfaceAddr *net.UDPAddr /* the interface this packet came in on */
+type IPPacket struct { // TODO: type is very likely not necessary and can be converted into just IncomingPacketChan []byte 
+
+	SrcIfaceAddr *net.UDPAddr 	/* the interface this packet came in on. TODO: verify if this is even
+								needed, if not, change IPStack IncomingPacketChan to just []byte type */
 	Data []byte /* message field */
 }
 

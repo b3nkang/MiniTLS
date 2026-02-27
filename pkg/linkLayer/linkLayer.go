@@ -2,58 +2,15 @@ package linkLayer
 
 import (
 	"fmt"
-	utils "ip-isabelle-and-ben/pkg/protocol"
 	"log"
 	"net"
-	"net/netip"
-
-	ipv4header "github.com/brown-csci1680/iptcp-headers"
 )
 
 const MaxMessageSize = 1400
 
 /* send an IP packet (IPV4 Header + bytes message) via UDP Link Layer */
-func (iface *Interface) LinkLayerSend(conn *net.UDPConn, udpDest *net.UDPAddr, source netip.Addr, dest netip.Addr, message string, protocol int) {
-	/* Start filling in the header, use passed in fields */
-	hdr := ipv4header.IPv4Header{
-		Version:  4,
-		Len:      20, // Header length is always 20 when no IP options
-		TOS:      0,
-		TotalLen: ipv4header.HeaderLen + len(message),
-		ID:       0,
-		Flags:    0,
-		FragOff:  0,
-		TTL:      32, /* will need to update */
-		Protocol: protocol,
-		Checksum: 0, // Should be 0 until checksum is computed
-		Src:      source,
-		Dst:      dest,
-		Options:  []byte{},
-	}
-
-	// Assemble the header into a byte array
-	headerBytes, err := hdr.Marshal()
-	if err != nil {
-		log.Fatalln("Error marshalling header:  ", err)
-	}
-	// Compute the checksum (see below)
-	// Cast back to an int, which is what the Header structure expects
-	hdr.Checksum = int(utils.ComputeChecksum(headerBytes))
-
-	headerBytes, err = hdr.Marshal()
-	if err != nil {
-		log.Fatalln("Error marshalling header:  ", err)
-	}
-
-	/* Append header + message into one byte array */
-	bytesToSend := make([]byte, 0, len(headerBytes)+len(message))
-	bytesToSend = append(bytesToSend, headerBytes...)
-	bytesToSend = append(bytesToSend, []byte(message)...)
-
-	// Send the message to the "link-layer" addr:port on UDP
-	// FOr h1:  send to port 5002
-	// ONE CALL TO WriteToUDP => 1 PACKET
-	bytesWritten, err := conn.WriteToUDP(bytesToSend, udpDest)
+func (iface *Interface) LinkLayerSend(udpDest *net.UDPAddr, bytes []byte) {
+	bytesWritten, err := iface.Conn.WriteToUDP(bytes, udpDest)
 	if err != nil {
 		log.Panicln("Error writing to socket: ", err)
 	}
@@ -71,46 +28,9 @@ func (iface *Interface) LinkLayerListen(ipStackChan chan IPPacket) error {
 		if err != nil {
 			log.Panicln("Error reading from UDP socket ", err)
 		}
-
-		// /* Marshal the received byte array into a UDP header
-		// NOTE:  This does not validate the checksum or check any fields */
-		// hdr, err := ipv4header.ParseHeader(buffer)
-
-		// if err != nil {
-		// 	/* drop packet if parsing doesn't work */
-		// 	fmt.Println("Error parsing header", err)
-		// 	continue
-		// }
-
-		// /* extract and validate checksum */
-		// headerSize := hdr.Len
-		// headerBytes := buffer[:headerSize]
-		// checksumFromHeader := uint16(hdr.Checksum)
-		// computedChecksum := ValidateChecksum(headerBytes, checksumFromHeader)
-
-		// /* determine if we passed or failed checksum */
-		// if computedChecksum == checksumFromHeader {
-		// 	fmt.Println("Checksum passed")
-		// } else {
-		// 	fmt.Printf("Checksum failed, dropping packet from %s\n", sourceAddr.String())
-		// 	continue // drop the packet just by continuing
-		// }
-
-		// /* Next, get the message, which starts after the header */
-		// message := buffer[headerSize:]
-
-		// /* print out all the stuff */
-		// fmt.Printf("[LL] Received IP packet from %s\nHeader:  %v\nChecksum:  PASSED\nMessage:  %s\n",
-		// 	sourceAddr.String(), hdr, string(message))
-		// /* build an IPPacket and send to IPStack */
-		// packet := IPPacket{
-		// 	Header: hdr,
-		// 	Data: message,
-		// }
-		// ipStackChan <- packet
 		
 		fmt.Printf("[LL] Received IP packet from %s. Forwarding to IP Stack...\n", sourceAddr.String())
-		
+
 		packet := IPPacket{
 			SrcIfaceAddr: sourceAddr,
 			Data: buffer,

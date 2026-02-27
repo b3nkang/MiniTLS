@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"ip-isabelle-and-ben/pkg/ipStack"
+
 	// "ip-isabelle-and-ben/pkg/lnxconfig"
 	// "net/netip"
 	"os"
@@ -37,9 +38,5 @@ func main() {
 
 	/* start REPL */
 	ipStack.StartREPL()
-
-	/* run forever */
-	select{}
-
 }
 

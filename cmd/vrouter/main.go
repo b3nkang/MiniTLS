@@ -36,9 +36,5 @@ func main() {
 
 	/* start REPL */
 	ipStack.StartREPL()
-
-	/* run forever */
-	select{}
-
 }
 

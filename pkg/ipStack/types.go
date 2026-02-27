@@ -1,7 +1,7 @@
 package ipStack
 
 import (
-	"net"
+	ll "ip-isabelle-and-ben/pkg/linkLayer"
 	"net/netip"
 )
 
@@ -11,29 +11,10 @@ import (
 	- List of fwding table entries to iterate through
 */
 type IPStack struct {
-	Interfaces			map[string]*Interface  	/* “if0” : Interface() */
+	// potentially consider adding a field "name" e.g. "H1" or "R1" for debugging purposes even if not strictly correct
+	Interfaces			map[string]*ll.Interface  	/* “if0” : Interface() */
 	ForwardingTable 	map[netip.Prefix]FwdEntry
-	IncomingPackets 	chan IPPacket
-}
-
-/*
-	For representing neighbors existing on the same local network
-*/
-type Neighbour struct {
-	IP  		netip.Addr 			// virtual IP (10.2.0.3)
-	UDPAddr		netip.AddrPort   	/* convert to net.UDPAddr when needed */
-}
-
-/*
-	Represents 1 local subnet
-	Neighbors: reachable via UDP (link layer) through this interface
-*/
-type Interface struct {
-	Name  		string								/* ex: "if0" */
-	Prefix		netip.Prefix 						/* 10.2.0.1/24 */
-	IP 			netip.Addr
-	Conn  		*net.UDPConn  							/* opened UDP socket */
-	Neighbours 	map[netip.Addr]Neighbour
+	IncomingPacketChan 	chan ll.IPPacket
 }
 
 /*

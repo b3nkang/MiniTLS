@@ -13,7 +13,7 @@ import (
 type IPStack struct {
 	Interfaces			map[string]*ll.Interface  	/* “if0” : Interface() */
 	ForwardingTable 	map[netip.Prefix]FwdEntry
-	IncomingPackets 	chan ll.IPPacket
+	IncomingPacketChan 	chan ll.IPPacket
 }
 
 /*

@@ -24,7 +24,7 @@ func InitIPStackFromConfig(fileName string)(*IPStack, error) {
 	ipStack := &IPStack{
 		Interfaces:      make(map[string]*ll.Interface),
 		ForwardingTable: make(map[netip.Prefix]FwdEntry, 0),
-		IncomingPackets: make(chan ll.IPPacket, 100),
+		IncomingPacketChan: make(chan ll.IPPacket, 100),
 	}
 
 	/* initialize structs within this IPStack */
@@ -82,7 +82,7 @@ func (stack *IPStack) Init(config *lnxconfig.IPConfig) error {
 
 	/* start listeners for each interface */
 	for _, iface := range stack.Interfaces {
-		go iface.LinkLayerListen(stack.IncomingPackets)
+		go iface.LinkLayerListen(stack.IncomingPacketChan)
 	}
 
 	return nil
@@ -129,44 +129,56 @@ func (stack *IPStack) InitFwdTable(config *lnxconfig.IPConfig) error {
 /* Run the IP Layer (handle and process messages) */
 func (stack *IPStack) RunIPLayer() {
 	// fmt.Println("Running IP Layer...")
-	for packet := range stack.IncomingPackets {
-		// fmt.Printf("IP Layer received validated packet from %s\n", packet.Header.Src.String())
-		// fmt.Printf("IP Layer got this packet too: %s\nHeader:  %v\nChecksum:  %s\nMessage:  %s\n",
-		// 	packet.Header.Src.String(), packet.Header, packet.Header.Checksum, string(packet.Data))
-
-		/* Marshal the received byte array into a UDP header
-		NOTE:  This does not validate the checksum or check any fields */
-		hdr, err := ipv4header.ParseHeader(packet.Data)
-
+	for packet := range stack.IncomingPacketChan {
+		message, hdr, err := ParseAndValidateIPPacket(packet)
 		if err != nil {
-			/* drop packet if parsing doesn't work */
-			fmt.Println("Error parsing header", err)
-			continue
+			continue	// drop packet if parsing or validation fails
 		}
-
-		/* extract and validate checksum */
-		headerSize := hdr.Len
-		headerBytes := packet.Data[:headerSize]
-		checksumFromHeader := uint16(hdr.Checksum)
-		computedChecksum := utils.ValidateChecksum(headerBytes, checksumFromHeader)
-
-		/* determine if we passed or failed checksum */
-		if computedChecksum == checksumFromHeader {
-			fmt.Println("Checksum passed")
-		} else {
-			fmt.Printf("Checksum failed, dropping packet from %s\n", packet.SrcIfaceAddr.String())
-			continue // drop the packet just by continuing
-		}
-
-		/* Next, get the message, which starts after the header */
-		message := packet.Data[headerSize:]
-
 		/* print out all the stuff */
-		fmt.Printf("[IP] Received IP packet from %s\nHeader:  %v\nChecksum:  PASSED\nMessage:  %s\n",
+		fmt.Printf("[IP] Received IP packet from %s\nHeader:  %v\nChecksum:  OK\nMessage:  %s\n",
 			packet.SrcIfaceAddr.String(), hdr, string(message))
 
 		// do stuff now.
 	}
+}
+
+/* Takes in raw bytes, validates the checksum, checks TTL, and returns the deserialized message and header */
+func ParseAndValidateIPPacket(packet ll.IPPacket) (string, *ipv4header.IPv4Header, error) {
+	/* Marshal the received byte array into a UDP header
+	NOTE:  This does not validate the checksum or check any fields */
+	hdr, err := ipv4header.ParseHeader(packet.Data)
+
+	if err != nil {
+		/* drop packet if parsing doesn't work */
+		fmt.Println("Error parsing header", err)
+		return "", nil, err
+	}
+
+	/* extract and validate checksum */
+	headerSize := hdr.Len
+	headerBytes := packet.Data[:headerSize]
+	checksumFromHeader := uint16(hdr.Checksum)
+	computedChecksum := utils.ValidateChecksum(headerBytes, checksumFromHeader)
+
+	/* determine if we passed or failed checksum */
+	if computedChecksum == checksumFromHeader {
+		fmt.Println("Checksum passed")
+	} else {
+		fmt.Printf("Checksum failed, dropping packet from %s\n", packet.SrcIfaceAddr.String())
+		return "", nil, err
+	}
+
+	// check TTL
+	if hdr.TTL <= 0 {
+		fmt.Printf("TTL expired, dropping packet from %s\n", packet.SrcIfaceAddr.String())
+		return "", nil, err
+	}
+	hdr.TTL -= 1 // TODO: move to another better place to decrement TTL later (forwarding)
+
+	/* Next, get the message, which starts after the header */
+	message := packet.Data[headerSize:]
+
+	return string(message), hdr, nil
 }
 
 /* Send a message on the IP Layer HARDCODED H1 -> R1 */

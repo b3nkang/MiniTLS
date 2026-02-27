@@ -24,12 +24,12 @@ func (stack *IPStack) StartREPL() {
 		if line == "" {
 			continue
 		}
-		stack.handleCommand(line)
+		stack.HandleCommand(line)
 	}
 }
 
 /* parse user command from REPL */
-func (stack *IPStack) handleCommand(line string) {
+func (stack *IPStack) HandleCommand(line string) {
 	parts := strings.SplitN(line, " ", 3)
 
 	if len(parts) < 1 {

@@ -127,6 +127,17 @@ func (stack *IPStack) InitFwdTable(config *lnxconfig.IPConfig) error {
 				}
 				stack.ForwardingTable[iface.Prefix] = entry
 			}
+			/* add static routes for router */
+			for prefix, address := range config.StaticRoutes {
+				entry := FwdEntry{
+					Prefix: prefix,
+					NextHop: address,
+					/* no interface name */
+					Type: SourceTypeStatic,
+					Cost: 0, /* local */
+				}
+				stack.ForwardingTable[entry.Prefix] = entry
+			}
 			/* TODO: call a function to setup RIP stuff maybe */
 
 		default:

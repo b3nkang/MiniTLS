@@ -4,15 +4,17 @@ all:
 clean:
 	rm -fv vhost vrouter
 
-h1:
+de-h1:
 	go run ./cmd/vhost --config ./doc-example/h1.lnx
 
-r1:
+de-r1:
 	go run ./cmd/vrouter --config ./doc-example/r1.lnx
 
 doc-ex:
 	util/vnet_run doc-example
 
+l-r1h2:
+	util/vnet_run linear-r1h2
 
 # # TODO: update to work with vnet_run once flushed out more
 

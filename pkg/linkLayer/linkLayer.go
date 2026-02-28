@@ -38,4 +38,4 @@ func (iface *Interface) LinkLayerListen(ipStackChan chan IPPacket) error {
 
 		ipStackChan <- packet
 	}
-}
+}	

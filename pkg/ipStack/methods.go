@@ -151,20 +151,37 @@ func (stack *IPStack) InitFwdTable(config *lnxconfig.IPConfig) error {
 func (ipStack *IPStack) SendIP(dest netip.Addr, message string) error {
 	/* hardcode fields that will come from forwarding and neighbor table for now */
 
-	/* conn for this stack's if0 (assume h1) */
-	myIf := ipStack.Interfaces["if0"]
+	// /* conn for this stack's if0 (assume h1) */
+	// myIf := ipStack.Interfaces["if0"]
 
-	/* string for r1's IP and port */
-	destStringAddr := "127.0.0.1:5001"
+	// /* string for r1's IP and port */
 
-	destUDPAddr, err := net.ResolveUDPAddr("udp", destStringAddr)
-	if err != nil {
-		panic(err)
+	// longest prefix match
+	entry, found := ipStack.LongestPrefixMatch(dest)
+	if !found {
+		fmt.Printf("[IP] No match on LongestPrefixMatch in FwdTable, dropping packet\n")
+		return errors.New("No match on LongestPrefixMatch in FwdTable")
 	}
-	
-	bytesToSend := SerializePacket(myIf.IP, dest, message, 0, 64, true)
-	myIf.LinkLayerSend(destUDPAddr, bytesToSend)
+	fmt.Printf("[IP] Longest prefix match found on %s\n", entry.InterfaceName)
 
+	// check how to forward
+	switch entry.Type {
+	case SourceTypeLocal:
+		// if direct, seek through neighbours and send 
+		fmt.Printf("[IP] Match is directly connected. Forwarding to destination %s\n", dest.String())
+		iface := ipStack.Interfaces[entry.InterfaceName]
+		destNeighbour := iface.Neighbours[dest]
+		destUDPAddr := net.UDPAddrFromAddrPort(destNeighbour.UDPAddr)
+		bytesToSend := SerializePacket(iface.IP, dest, string(message), 0, 0, true) // TODO: check what protocol is bc idk
+		iface.LinkLayerSend(destUDPAddr, bytesToSend)
+	case SourceTypeRIP:
+		// TODO: if via RIP, forward to next hop
+		// complete once next hop-updating logic is implemented
+	case SourceTypeStatic:
+		// go to next hop in entry and send to that address (which should be the default gateway)
+	default:
+		fmt.Printf("[IP] Found a match but could not send, bad entry type. Error should not happen. Dropping packet\n")
+	}
 	return nil
 }
 
@@ -233,7 +250,7 @@ func (ipStack *IPStack) RunIPLayer() {
 
 // returns the FwdEntry with the longest prefix match and true. if none, bool return value is false
 func (ipStack *IPStack) LongestPrefixMatch(dest netip.Addr) (FwdEntry, bool) {
-	maxLen := 0
+	maxLen := -1
 	var longestMatchEntry FwdEntry
 	for prefix, entry := range ipStack.ForwardingTable {
 		if prefix.Contains(dest) && prefix.Bits() > maxLen {
@@ -241,9 +258,10 @@ func (ipStack *IPStack) LongestPrefixMatch(dest netip.Addr) (FwdEntry, bool) {
 			longestMatchEntry = entry
 		}
 	}
-	if maxLen == 0 {
+	if maxLen == -1 {
 		return FwdEntry{}, false
 	}
+	// fmt.Printf("found best match %s on prefix %s\n", longestMatchEntry.InterfaceName, longestMatchEntry.Prefix.Addr())
 	return longestMatchEntry, true
 }
 

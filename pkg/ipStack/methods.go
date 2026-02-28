@@ -138,7 +138,11 @@ func (stack *IPStack) InitFwdTable(config *lnxconfig.IPConfig) error {
 				}
 				stack.ForwardingTable[entry.Prefix] = entry
 			}
-			/* TODO: call a function to setup RIP stuff maybe */
+			/* since we know we're a router, Init RIPInfo here */
+			err := stack.InitRIP(config)
+			if err != nil {
+				return err
+			}
 
 		default:
 			log.Printf("Routing Mode that's not static or RIP: %d\n", config.RoutingMode)
@@ -146,8 +150,6 @@ func (stack *IPStack) InitFwdTable(config *lnxconfig.IPConfig) error {
 		}
 	return nil
 }
-
-
 
 /* Highest-level send function on IP Stack, called by REPL. Internal sends use iface.LinkLayerSend(). */
 /* Send a message on the IP Layer HARDCODED H1 -> R1 TODO: update to not be hardcoded */
@@ -173,7 +175,8 @@ func (ipStack *IPStack) SendIP(dest netip.Addr, message string) error {
 		panic(err)
 	}
 	
-	bytesToSend := SerializePacket(myIf.IP, dest, message, 0, 64, true)
+	/* added conversion from string to bytes here for inclusion of RIP stuff */
+	bytesToSend := SerializePacket(myIf.IP, dest, []byte(message), ProtocolTypeTest, TTLNew, true)
 	myIf.LinkLayerSend(destUDPAddr, bytesToSend)
 
 	return nil
@@ -231,7 +234,7 @@ func (ipStack *IPStack) RunIPLayer() {
 			iface := ipStack.Interfaces[entry.InterfaceName]
 			destNeighbour := iface.Neighbours[hdr.Dst]
 			destUDPAddr := net.UDPAddrFromAddrPort(destNeighbour.UDPAddr)
-			bytesToSend := SerializePacket(iface.IP, hdr.Dst, string(message), 0, hdr.TTL, false) // TODO: check what protocol is bc idk
+			bytesToSend := SerializePacket(iface.IP, hdr.Dst, message, 0, hdr.TTL, false) // TODO: check what protocol is bc idk
 			iface.LinkLayerSend(destUDPAddr, bytesToSend)
 		case SourceTypeRIP:
 			// TODO: if via RIP, forward to next hop
@@ -261,7 +264,8 @@ func (ipStack *IPStack) LongestPrefixMatch(dest netip.Addr) (FwdEntry, bool) {
 // TODO: potentially move these serializers/deserializers to Protocol? idk
 
 /* serializes an IP packet (IPV4 Header + bytes message) for the UDP layer to send */
-func SerializePacket(source netip.Addr, dest netip.Addr, message string, protocol int, ttl int, isTtlNew bool) ([]byte) {
+/* need to change string message to bytes to acccommodate RIP packets */
+func SerializePacket(source netip.Addr, dest netip.Addr, message []byte, protocol int, ttl int, isTtlNew bool) ([]byte) {
 	/* Start filling in the header, use passed in fields */
 	hdr := ipv4header.IPv4Header{
 		Version:  4,
@@ -296,13 +300,13 @@ func SerializePacket(source netip.Addr, dest netip.Addr, message string, protoco
 	/* Append header + message into one byte array */
 	bytesToSend := make([]byte, 0, len(headerBytes)+len(message))
 	bytesToSend = append(bytesToSend, headerBytes...)
-	bytesToSend = append(bytesToSend, []byte(message)...)
+	bytesToSend = append(bytesToSend, message...)
 
 	return bytesToSend
 }
 
 /* Takes in raw bytes, validates the checksum, checks TTL, and returns the deserialized message and header */
-func DeserializeAndValidatePacket(packet ll.IPPacket) (string, *ipv4header.IPv4Header, error) {
+func DeserializeAndValidatePacket(packet ll.IPPacket) ([]byte, *ipv4header.IPv4Header, error) {
 	/* Marshal the received byte array into a UDP header
 	NOTE:  This does not validate the checksum or check any fields */
 	hdr, err := ipv4header.ParseHeader(packet.Data)
@@ -310,7 +314,7 @@ func DeserializeAndValidatePacket(packet ll.IPPacket) (string, *ipv4header.IPv4H
 	if err != nil {
 		/* drop packet if parsing doesn't work */
 		fmt.Println("Error parsing header", err)
-		return "", nil, err
+		return make([]byte,0), nil, err
 	}
 
 	/* extract and validate checksum */
@@ -324,17 +328,19 @@ func DeserializeAndValidatePacket(packet ll.IPPacket) (string, *ipv4header.IPv4H
 		fmt.Println("Checksum passed")
 	} else {
 		fmt.Printf("Checksum failed, dropping packet from %s\n", packet.SrcIfaceAddr.String())
-		return "", nil, err
+		return make([]byte,0), nil, err
 	}
 
 	// check TTL
 	if hdr.TTL <= 0 {
 		fmt.Printf("TTL expired, dropping packet from %s\n", packet.SrcIfaceAddr.String())
-		return "", nil, err
+		return make([]byte,0), nil, err
 	}
 
 	/* Next, get the message, which starts after the header */
 	message := packet.Data[headerSize:]
 
-	return string(message), hdr, nil
+	/* we probably don't want to return a string here--just want to return bytes and let 
+		handler convert */
+	return message, hdr, nil
 }

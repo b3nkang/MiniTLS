@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"ip-isabelle-and-ben/pkg/ipStack"
+
 	// "ip-isabelle-and-ben/pkg/lnxconfig"
 	// "net/netip"
 	"os"
@@ -30,9 +31,11 @@ func main() {
 	ipStack.PrintForwardingTable()
 	ipStack.PrintInterfacesForDebugging()
 
-
 	/* start handling IP messages */
 	go ipStack.RunIPLayer()
+
+	/* start RIP - uncomment when RIP messages can actually be received */
+	// go ipStack.UpdateLoop()
 
 	/* start REPL */
 	ipStack.StartREPL()

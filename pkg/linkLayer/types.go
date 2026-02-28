@@ -14,7 +14,7 @@ type Interface struct {
 	Prefix		netip.Prefix 						/* 10.2.0.1/24 */
 	IP 			netip.Addr
 	Conn  		*net.UDPConn  						/* opened UDP socket */
-	Neighbours 	map[netip.Addr]Neighbour			/* neighbour IP addr : Neighbour() */
+	Neighbours 	map[netip.Addr]*Neighbour			/* neighbour IP addr : Neighbour() */
 }
 
 /*

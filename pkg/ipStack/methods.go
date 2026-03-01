@@ -176,7 +176,7 @@ func (ipStack *IPStack) SendIP(finalDest netip.Addr, message string) error {
 		} else {
 			nextDestAsUDPAddr := net.UDPAddrFromAddrPort(nextDestAsNeighbour.UDPAddr)
 			// brand new send, so specify new TTL
-			bytesToSend := SerializePacket(iface.IP, finalDest, string(message), 0, 0, true) // TODO: check what protocol is bc idk
+			bytesToSend := SerializePacket(iface.IP, finalDest, []byte(message), ProtocolTypeTest, 0, true)
 			iface.LinkLayerSend(nextDestAsUDPAddr, bytesToSend)
 		}
 	case SourceTypeRIP:
@@ -246,7 +246,7 @@ func (ipStack *IPStack) RunIPLayer() {
 				continue
 			}
 			nextDestAsUDPAddr := net.UDPAddrFromAddrPort(nextDestAsNeighbour.UDPAddr)
-			bytesToSend := SerializePacket(iface.IP, finalDest, string(message), 0, hdr.TTL, false) // TODO: check what protocol is bc idk
+			bytesToSend := SerializePacket(iface.IP, finalDest, message, 0, hdr.TTL, false) // TODO: check what protocol is bc idk
 			iface.LinkLayerSend(nextDestAsUDPAddr, bytesToSend)
 		case SourceTypeRIP:
 			// TODO: if via RIP, forward to next hop
@@ -295,7 +295,7 @@ func SerializePacket(source netip.Addr, dest netip.Addr, message []byte, protoco
 		ID:       0,
 		Flags:    0,
 		FragOff:  0,
-		TTL:      32,
+		TTL:      TTLNew,
 		Protocol: protocol,
 		Checksum: 0, // Should be 0 until checksum is computed
 		Src:      source,

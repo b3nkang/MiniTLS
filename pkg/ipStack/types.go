@@ -52,14 +52,14 @@ type FwdEntry struct {
 	LastUpdated 	time.Time 		/* for RIP */
 }
 
-type RipNeighbor struct {
+type RipNeighbour struct {
 	RouterIP netip.Addr
 	InterfaceName string /* for ease */
 }
 
 type RipInfo struct {
 	/* would be far more helpful if we had an interface here than neighboring IP -> will have to get that later */
-	Neighbors 		[]RipNeighbor
+	Neighbors 		[]RipNeighbour
 	RipTimeout		time.Duration
 	RipUpdateRate	time.Duration
 }

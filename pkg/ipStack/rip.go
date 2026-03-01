@@ -20,7 +20,7 @@ const (
 /* Init RIP Neighbor Information and Routes */
 func (stack *IPStack) InitRIP(config *lnxconfig.IPConfig) error {
 	info := RipInfo{
-		Neighbors: make([]RipNeighbor, 0),
+		Neighbors: make([]RipNeighbour, 0),
 		RipTimeout: config.RipTimeoutThreshold,
 		RipUpdateRate: config.RipPeriodicUpdateRate,
 	}
@@ -30,7 +30,7 @@ func (stack *IPStack) InitRIP(config *lnxconfig.IPConfig) error {
 		found := false
 		for _, iface := range stack.Interfaces {
 			if _, exists := iface.Neighbours[ripIP]; exists {
-				info.Neighbors = append(info.Neighbors, RipNeighbor{
+				info.Neighbors = append(info.Neighbors, RipNeighbour{
 					RouterIP: ripIP,
 					InterfaceName: iface.Name,
 				})
@@ -50,7 +50,7 @@ func (stack *IPStack) InitRIP(config *lnxconfig.IPConfig) error {
 /* what main function will call to run goroutine */
 func (stack *IPStack) UpdateLoop() {
 	/* if we wait for first tick, update won't be sent for 5 seconds so must sent at t=0 */
-	stack.sendPeriodicUpdate()
+	stack.SendPeriodicUpdate()
 	
 	/* now start ticker loop */
 	ticker := time.NewTicker(stack.RipInfo.RipUpdateRate)
@@ -59,21 +59,21 @@ func (stack *IPStack) UpdateLoop() {
 	for {
 		select {
 		case <- ticker.C:
-			stack.sendPeriodicUpdate()
+			stack.SendPeriodicUpdate()
 		}
 	}
 }
 
 /* should be run at every timer tick -- sends periodic updates to neighbors */
 /* TODO: ADD SCANNING OF ROUTES LAST UPDATED FIELD */
-func (stack *IPStack) sendPeriodicUpdate() {
+func (stack *IPStack) SendPeriodicUpdate() {
 	/* protect Fwdtable */
 	stack.mu.Lock()
 	defer stack.mu.Unlock()
 
 	for _, neighbor := range stack.RipInfo.Neighbors {
 		/* list of RIPEntries that will be sent to this neighbor */
-		routesToSend := make([]RIPEntry, 0)
+		routesToSend := make([]RipEntry, 0)
 
 		/* prefix: entry */
 		for _, entry := range stack.ForwardingTable {
@@ -84,34 +84,34 @@ func (stack *IPStack) sendPeriodicUpdate() {
 					cost = Infinity
 				}
 			}
-			routesToSend = append(routesToSend, RIPEntry{
+			routesToSend = append(routesToSend, RipEntry{
 				Prefix: entry.Prefix,
 				Cost: uint32(cost),
 			})
 		}
-		ripMessage := RIPMessage{
+		RipMessage := RipMessage{
 			Command: RIPResponse,
 			NumEntries: uint16(len(routesToSend)),
 			Entries: routesToSend,
 		}
-		stack.sendRIPMessage(ripMessage, neighbor)
+		stack.SendRipMessage(RipMessage, neighbor)
 	}
 }
 
 /* converts RIP message into bytes, appends header, and sends to neighbor specified */
-func (stack *IPStack) sendRIPMessage(message RIPMessage, neighbor RipNeighbor) error {
+func (stack *IPStack) SendRipMessage(message RipMessage, neighbour RipNeighbour) error {
 	/* Marshal and send RIP Message to this neighbor */
 	bytes, err := message.Marshal()
 	if err != nil {
-		/* TODO: should we just continue here? */
+		/* TODO: should we just continue here? answer: idk tbd -Ben */
 		fmt.Println("Error converting RIP Message into bytes.")
 		return err
 	}
 	
 	/* source IP should be the IP of the interface that we send messages to this neighbor on */
-	sourceInterface := stack.Interfaces[neighbor.InterfaceName]
+	sourceInterface := stack.Interfaces[neighbour.InterfaceName]
 	sourceIP := sourceInterface.IP
-	destIP := neighbor.RouterIP
+	destIP := neighbour.RouterIP
 	/* Actual UDP Address: interface to send on -> neighbors -> RIP neighbor we're sending to -> their UDP address -> convert to net type*/
 	udpAddr := net.UDPAddrFromAddrPort(sourceInterface.Neighbours[destIP].UDPAddr)
 
@@ -124,18 +124,18 @@ func (stack *IPStack) sendRIPMessage(message RIPMessage, neighbor RipNeighbor) e
 
 /**** MAY WANT TO MOVE ELSEWHERE I JUST DON'T KNOW WHERE ****/
 
-type RIPMessage struct {
+type RipMessage struct {
 	Command uint16				/* Request/Response */
 	NumEntries uint16			/* num routes being sent */
-	Entries []RIPEntry			/* actual entries */
+	Entries []RipEntry			/* actual entries */
 }
-type RIPEntry struct {
+type RipEntry struct {
 	Cost 		uint32			/* cost of this router to get to address */
 	Prefix 		netip.Prefix	/* contains both prefix and NETWORK address (specific VIP not needed) */
 }
 
 /* marshal rip message into bytes */
-func (m *RIPMessage) Marshal() ([]byte, error) {
+func (m *RipMessage) Marshal() ([]byte, error) {
     buf := new(bytes.Buffer)
     /* write command */
     if err := binary.Write(buf, binary.BigEndian, m.Command); err != nil {
@@ -170,9 +170,9 @@ func (m *RIPMessage) Marshal() ([]byte, error) {
 
 /* deserialize rip packet 
 assume IP header is NOT included here */
-func DeserializeRIPMessage (data []byte) (*RIPMessage, error) {
+func DeserializeRipMessage (data []byte) (*RipMessage, error) {
     buf := bytes.NewReader(data)
-    var msg RIPMessage
+    var msg RipMessage
     var numEntries uint16
 
 	/* read command and numEntries */
@@ -184,7 +184,7 @@ func DeserializeRIPMessage (data []byte) (*RIPMessage, error) {
     }
 
 	/* create entries structs */
-    msg.Entries = make([]RIPEntry, numEntries)
+    msg.Entries = make([]RipEntry, numEntries)
     for i := 0; i < int(numEntries); i++ {
 
         var cost, addrUint, maskUint uint32
@@ -218,7 +218,7 @@ func DeserializeRIPMessage (data []byte) (*RIPMessage, error) {
             }),
             prefixLen,
         )
-        msg.Entries[i] = RIPEntry{
+        msg.Entries[i] = RipEntry{
             Prefix: prefix,
             Cost:   cost,
         }

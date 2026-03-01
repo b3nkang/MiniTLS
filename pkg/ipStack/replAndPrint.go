@@ -165,7 +165,7 @@ func typeToLetter(t int) string {
 /* Print the Interface table DEBUGGING */
 func (stack *IPStack) PrintInterfacesForDebugging() {
     table := tablewriter.NewWriter(os.Stdout)
-    table.Header([]string{"Name", "Prefix", "Neighbors"})
+    table.Header([]string{"Name", "My IP on this IF", "Prefix", "Neighbors"})
 
     for _, iface := range stack.Interfaces {
         ns := ""
@@ -174,6 +174,7 @@ func (stack *IPStack) PrintInterfacesForDebugging() {
         }
         table.Append([]string{
             iface.Name,
+			iface.IP.String(),
             iface.Prefix.String(),
             ns,
         })

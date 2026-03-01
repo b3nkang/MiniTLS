@@ -237,13 +237,12 @@ func (ipStack *IPStack) HandleRipMessage(hdr *ipv4header.IPv4Header, messageByte
 	changedEntries := make([]RipEntry, 0)
 
 	for _, ripEntry := range ripMsg.Entries {
+		fmt.Printf("entry: %s can reach %s with cost=%d\n", hdr.Src.String(), ripEntry.Prefix.String(), int(ripEntry.Cost))
 		currFwdEntry, exists := ipStack.ForwardingTable[ripEntry.Prefix]
 		// check if exists, if not, add
 		if !exists {
-			fmt.Printf("[RIP] Received RipEntry AND added to table.\nNew table: \n")
 			ipStack.UpdateForwardingTable(ripEntry, hdr, "")
 			changedEntries = append(changedEntries, ripEntry)
-			fmt.Println("Entry changed in new route case")
 			continue
 		} 
 		// if it already is in table, check if we can even update it
@@ -255,26 +254,17 @@ func (ipStack *IPStack) HandleRipMessage(hdr *ipv4header.IPv4Header, messageByte
 		// if lower cost, just update
 		ripEntryCost := ripEntry.Cost+1
 		currFwdEntryCost := currFwdEntry.Cost
-		fmt.Printf("Current cost: %d, RIP entry cost: %d\n", ripEntryCost, currFwdEntryCost)
 		if ripEntryCost < currFwdEntryCost {
 			ipStack.UpdateForwardingTable(ripEntry, hdr, "")
-			fmt.Println("Entry changed in lower cost case")
 			changedEntries = append(changedEntries, ripEntry)
 			continue
 		}
 		// else, if it doesn't equal
 		// TODO: NOTE this is WRONG for SH/PR, UPDATE later but naive implementation for now
-		/* 
-			I'm confused about this case. I thought:
-			If cost is HIGHER than current cost, and the Source is the SAME as our next hop
-			for this route, we DO UPDATE because that means topology changed.
-			But right now, you're updating this route if the source ISN'T the next hop.
-		*/
-		if ripEntryCost != currFwdEntryCost {
+		if ripEntryCost > currFwdEntryCost {
 			// if the next hops are diff, topology changed, updated
-			if hdr.Src != currFwdEntry.NextHop {
+			if hdr.Src == currFwdEntry.NextHop {
 				ipStack.UpdateForwardingTable(ripEntry, hdr, "")
-				fmt.Println("Entry changed in higher cost case")
 				changedEntries = append(changedEntries, ripEntry)
 				continue
 			} 
@@ -288,7 +278,6 @@ func (ipStack *IPStack) HandleRipMessage(hdr *ipv4header.IPv4Header, messageByte
 
 	/* if our costs changed, trigger a new RIPMessage to be sent */
 	if len(changedEntries) != 0 {
-		fmt.Println("Entries in routing table changed. Sending triggered update to neighbors.")
 		ipStack.SendTriggeredUpdate(changedEntries)
 	}
 }
@@ -351,7 +340,7 @@ func (ipStack *IPStack) IPForwarding(hdr *ipv4header.IPv4Header, message string,
 			iface.LinkLayerSend(nextDestAsUDPAddr, bytesToSend)
 		/* we are a router and we learned about this route through RIP */
 		case SourceTypeRIP:
-			fmt.Println("[IP] hit SourceTypeRIP case in IPForwarding")
+			fmt.Println("[IP] BAD THING HAPPENED THIS SHOULDN'T HAPPEN hit SourceTypeRIP case in IPForwarding")
 			// if via RIP, forward to next hop, complete once next hop-updating logic is implemented
 			// TODO: verify after RIP handling complete that this is still necessary; LPM recursion may handle this already
 		default:

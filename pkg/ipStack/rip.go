@@ -22,7 +22,7 @@ func (stack *IPStack) InitRIP(config *lnxconfig.IPConfig) error {
 	info := RipInfo{
 		Neighbors: make([]RipNeighbour, 0),
 		RipTimeout: config.RipTimeoutThreshold,
-		RipUpdateRate: config.RipPeriodicUpdateRate,
+		RipUpdateRate: config.RipPeriodicUpdateRate, // TODO: CHANGE BACK RipPeriodicUpdateRate IN LNXCONFIG
 	}
 	/* pre-figure out interface name for each RIP neighbor to save time
 		in the future */
@@ -119,19 +119,6 @@ func (stack *IPStack) SendRipMessage(message RipMessage, neighbour RipNeighbour)
 	packet := SerializePacket(sourceIP, destIP, bytes, ProtocolTypeRIP, TTLNew, true)
 	sourceInterface.LinkLayerSend(udpAddr, packet)
 	return nil
-}
-
-
-/**** MAY WANT TO MOVE ELSEWHERE I JUST DON'T KNOW WHERE ****/
-
-type RipMessage struct {
-	Command uint16				/* Request/Response */
-	NumEntries uint16			/* num routes being sent */
-	Entries []RipEntry			/* actual entries */
-}
-type RipEntry struct {
-	Cost 		uint32			/* cost of this router to get to address */
-	Prefix 		netip.Prefix	/* contains both prefix and NETWORK address (specific VIP not needed) */
 }
 
 /* marshal rip message into bytes */

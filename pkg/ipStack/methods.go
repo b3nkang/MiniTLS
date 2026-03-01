@@ -55,7 +55,7 @@ func (stack *IPStack) Init(config *lnxconfig.IPConfig) error {
 			Prefix: ifx.AssignedPrefix,
 			IP: ifx.AssignedIP,
 			Conn: conn,
-			Neighbours: make(map[netip.Addr]ll.Neighbour),
+			Neighbours: make(map[netip.Addr]*ll.Neighbour),
 		}
 		
 		stack.Interfaces[ifx.Name] = iface
@@ -72,7 +72,7 @@ func (stack *IPStack) Init(config *lnxconfig.IPConfig) error {
 			UDPAddr: n.UDPAddr, /* net.UDPAddr */
 		}
 		/* map neighbor's IP address to neighbor struct */
-		iface.Neighbours[n.DestAddr] = neighbor
+		iface.Neighbours[n.DestAddr] = &neighbor
 	}
 
 	err := stack.InitFwdTable(config)
@@ -152,33 +152,39 @@ func (stack *IPStack) InitFwdTable(config *lnxconfig.IPConfig) error {
 }
 
 /* Highest-level send function on IP Stack, called by REPL. Internal sends use iface.LinkLayerSend(). */
-/* Send a message on the IP Layer HARDCODED H1 -> R1 TODO: update to not be hardcoded */
-/*
-	Test: send message from h1 to r1 in doc-example
-	h1: 
-		- UDP: 127.0.0.1:5000
-	r1: 
-		- IP to send to: 10.0.0.2 
-		- UDP to send to: 127.0.0.1:5001
-*/
-func (ipStack *IPStack) SendIP(dest netip.Addr, message string) error {
-	/* hardcode fields that will come from forwarding and neighbor table for now */
-
-	/* conn for this stack's if0 (assume h1) */
-	myIf := ipStack.Interfaces["if0"]
-
-	/* string for r1's IP and port */
-	destStringAddr := "127.0.0.1:5001"
-
-	destUDPAddr, err := net.ResolveUDPAddr("udp", destStringAddr)
-	if err != nil {
-		panic(err)
+// TODO: low priority, but lots of the forwarding logic here is duplicated with RunIPLayer(). There are some nontrivial 
+// differences though, hence why the logic hasn't been abstracted into 1 func yet, but consider in future if messoooy
+func (ipStack *IPStack) SendIP(finalDest netip.Addr, message string) error {
+	// longest prefix match
+	entry, nextDest, found := ipStack.LongestPrefixMatch(finalDest)
+	if !found {
+		fmt.Printf("[IP] No match on LongestPrefixMatch in FwdTable, dropping packet\n")
+		return errors.New("No match on LongestPrefixMatch in FwdTable")
 	}
-	
-	/* added conversion from string to bytes here for inclusion of RIP stuff */
-	bytesToSend := SerializePacket(myIf.IP, dest, []byte(message), ProtocolTypeTest, TTLNew, true)
-	myIf.LinkLayerSend(destUDPAddr, bytesToSend)
+	fmt.Printf("[IP] Longest prefix match found on %s\n", entry.InterfaceName)
 
+	// check how to forward
+	switch entry.Type {
+	case SourceTypeLocal:
+		// if direct, seek through neighbours and send 
+		fmt.Printf("[IP] Match is directly connected. Forwarding to destination %s\n", nextDest.String())
+		iface := ipStack.Interfaces[entry.InterfaceName]
+		nextDestAsNeighbour := iface.Neighbours[nextDest]
+		if nextDestAsNeighbour == nil {
+			fmt.Printf("[IP] We hit default forwarding case, but the next hop address <%s> does not exist. Dropping packet...\n", nextDest.String())
+			// no other error for now
+		} else {
+			nextDestAsUDPAddr := net.UDPAddrFromAddrPort(nextDestAsNeighbour.UDPAddr)
+			// brand new send, so specify new TTL
+			bytesToSend := SerializePacket(iface.IP, finalDest, string(message), 0, 0, true) // TODO: check what protocol is bc idk
+			iface.LinkLayerSend(nextDestAsUDPAddr, bytesToSend)
+		}
+	case SourceTypeRIP:
+		// TODO: if via RIP, forward to next hop
+		// complete once next hop-updating logic is implemented
+	default:
+		fmt.Printf("[IP] Found a match but could not send, bad entry type. Error should not happen. Dropping packet\n")
+	}
 	return nil
 }
 
@@ -199,8 +205,9 @@ func (ipStack *IPStack) RunIPLayer() {
 		
 		// ---- DESTINATION REACHED CASE ----
 		destFound := false
+		finalDest := hdr.Dst
 		for _, iface := range ipStack.Interfaces {
-			if iface.IP == hdr.Dst {
+			if iface.IP == finalDest {
 				fmt.Printf("[IP] packet destination reached on interface %s\n", iface.Name)
 				destFound = true
 				// TODO: call handler
@@ -208,6 +215,7 @@ func (ipStack *IPStack) RunIPLayer() {
 			}
 		}
 		if destFound {
+			fmt.Printf("> ") // print for REPL
 			continue // we're done, wait for next paket
 		}
 
@@ -215,14 +223,14 @@ func (ipStack *IPStack) RunIPLayer() {
 		// decrement TTL
 		hdr.TTL -= 1
 		if hdr.TTL <= 0 {
-			fmt.Printf("[IP] pre-decrement TTL expired, dropping packet")
+			fmt.Printf("[IP] pre-decrement TTL expired, dropping packet\n> ")
 			// TODO: no current way to ident IPStack addr, consider IPStack type update
 			continue
 		}
 		// longest prefix match
-		entry, found := ipStack.LongestPrefixMatch(hdr.Dst)
+		entry, nextDest, found := ipStack.LongestPrefixMatch(hdr.Dst)
 		if !found {
-			fmt.Printf("[IP] No match on LongestPrefixMatch in FwdTable, dropping packet\n")
+			fmt.Printf("[IP] No match on LongestPrefixMatch in FwdTable, dropping packet\n> ")
 			continue
 		}
 		fmt.Printf("[IP] Longest prefix match found on %s\n", entry.InterfaceName)
@@ -230,24 +238,29 @@ func (ipStack *IPStack) RunIPLayer() {
 		switch entry.Type {
 		case SourceTypeLocal:
 			// if direct, seek through neighbours and send 
-			fmt.Printf("[IP] Match is directly connected. Forwarding to destination %s\n", hdr.Dst.String())
+			fmt.Printf("[IP] Match prefix is directly connected. Forwarding to prefix %s for dest %s\n", entry.Prefix.String(), hdr.Dst.String())
 			iface := ipStack.Interfaces[entry.InterfaceName]
-			destNeighbour := iface.Neighbours[hdr.Dst]
-			destUDPAddr := net.UDPAddrFromAddrPort(destNeighbour.UDPAddr)
-			bytesToSend := SerializePacket(iface.IP, hdr.Dst, message, 0, hdr.TTL, false) // TODO: check what protocol is bc idk
-			iface.LinkLayerSend(destUDPAddr, bytesToSend)
+			nextDestAsNeighbour := iface.Neighbours[nextDest]
+			if nextDestAsNeighbour == nil {
+				fmt.Printf("[IP] We hit default forwarding case, but the next hop address <%s> does not exist. Dropping packet...\n> ", nextDest.String())
+				continue
+			}
+			nextDestAsUDPAddr := net.UDPAddrFromAddrPort(nextDestAsNeighbour.UDPAddr)
+			bytesToSend := SerializePacket(iface.IP, finalDest, string(message), 0, hdr.TTL, false) // TODO: check what protocol is bc idk
+			iface.LinkLayerSend(nextDestAsUDPAddr, bytesToSend)
 		case SourceTypeRIP:
 			// TODO: if via RIP, forward to next hop
 			// complete once next hop-updating logic is implemented
 		default:
-			fmt.Printf("[IP] Found a match but could not send, bad entry type. Error should not happen. Dropping packet\n")
+			fmt.Printf("[IP] Found a match but could not send, bad entry type. Error should not happen. Dropping packet...\n> ")
 		}
+		fmt.Printf("> ")
 	}
 }
 
-// returns the FwdEntry with the longest prefix match and true. if none, bool return value is false
-func (ipStack *IPStack) LongestPrefixMatch(dest netip.Addr) (FwdEntry, bool) {
-	maxLen := 0
+// returns the FwdEntry and dest netIPAddr with the longest prefix match and true. if none, bool return value is false
+func (ipStack *IPStack) LongestPrefixMatch(dest netip.Addr) (FwdEntry, netip.Addr, bool) {
+	maxLen := -1
 	var longestMatchEntry FwdEntry
 	for prefix, entry := range ipStack.ForwardingTable {
 		if prefix.Contains(dest) && prefix.Bits() > maxLen {
@@ -255,10 +268,17 @@ func (ipStack *IPStack) LongestPrefixMatch(dest netip.Addr) (FwdEntry, bool) {
 			longestMatchEntry = entry
 		}
 	}
-	if maxLen == 0 {
-		return FwdEntry{}, false
+	if maxLen == -1 {
+		return FwdEntry{}, netip.Addr{}, false
 	}
-	return longestMatchEntry, true
+	if maxLen == 0 {
+		fmt.Printf("[IP] Longest prefix match is default route, recursing on nextHop...\n")
+		return ipStack.LongestPrefixMatch(longestMatchEntry.NextHop)
+	}
+	// TODO: potentially update to check entry for iface, if it's not there, recurse on nextHop until we find an entry with a valid iface or we hit default route (in which case we drop packet since no match)
+
+	// fmt.Printf("found best match %s on prefix %s\n", longestMatchEntry.InterfaceName, longestMatchEntry.Prefix.Addr())
+	return longestMatchEntry, dest, true
 }
 
 // TODO: potentially move these serializers/deserializers to Protocol? idk

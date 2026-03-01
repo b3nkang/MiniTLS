@@ -19,6 +19,9 @@ l-r1h2:
 l-r1h4:
 	util/vnet_run linear-r1h4
 
+l-r3h2:
+	util/vnet_run linear-r3h2
+
 # # TODO: update to work with vnet_run once flushed out more
 
 # Here are our favorite vnet_run commands (replace <net dir> with a directory that has lnx files):

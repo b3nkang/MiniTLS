@@ -4,8 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"ip-isabelle-and-ben/pkg/ipStack"
-	// "ip-isabelle-and-ben/pkg/lnxconfig"
-	// "net/netip"
+
 	"os"
 )
 
@@ -23,16 +22,18 @@ func main() {
 	/* initialize IP stack */
 	ipStack, err := ipStack.InitIPStackFromConfig(*configPath)
 	if err != nil {
-		fmt.Println("Error initializing IP Stack: %s", err.Error())
+		fmt.Printf("Error initializing IP Stack: %s\n", err.Error())
 		os.Exit(1)
 	}
 
 	ipStack.PrintForwardingTable()
 	ipStack.PrintInterfacesForDebugging()
 
-
 	/* start handling IP messages */
 	go ipStack.RunIPLayer()
+
+	/* start RIP - uncomment when RIP messages can actually be received */
+	// go ipStack.UpdateLoop()
 
 	/* start REPL */
 	ipStack.StartREPL()

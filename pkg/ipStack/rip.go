@@ -90,12 +90,30 @@ func (stack *IPStack) SendPeriodicUpdate() {
 				Cost: uint32(cost),
 			})
 		}
-		RipMessage := RipMessage{
+		ripMessage := RipMessage{
 			Command: RIPResponse,
 			NumEntries: uint16(len(routesToSend)),
 			Entries: routesToSend,
 		}
-		stack.SendRipMessage(RipMessage, neighbor)
+		err := stack.SendRipMessage(ripMessage, neighbor)
+		if err != nil {
+			fmt.Printf("Error sending periodic update to Neighbor: $%s. Just gonna keep going tho\n", neighbor.RouterIP.String())
+		}
+	}
+}
+
+func (stack *IPStack) SendTriggeredUpdate(entries []RipEntry) {
+	fmt.Println("Sending triggered update")
+	message := RipMessage{
+		Command: RIPResponse,
+		NumEntries: uint16(len(entries)),
+		Entries: entries,
+	}
+	for _, neighbor := range stack.RipInfo.Neighbors {
+		err := stack.SendRipMessage(message, neighbor)
+		if err != nil {
+			fmt.Printf("Error sending triggered update to Neighbor: $%s. Just gonna keep going tho\n", neighbor.RouterIP.String())
+		}
 	}
 }
 

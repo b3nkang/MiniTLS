@@ -227,13 +227,12 @@ func (ipStack *IPStack) HandleRipMessage(hdr *ipv4header.IPv4Header, messageByte
 	// lock while we update table
 	ipStack.mu.Lock()
 	defer ipStack.mu.Unlock()
-
+	ipStack.PrintForwardingTable()
 	for _, ripEntry := range ripMsg.Entries {
 		currFwdEntry, exists := ipStack.ForwardingTable[ripEntry.Prefix]
 		// check if exists, if not, add
 		if !exists {
 			fmt.Printf("[RIP] Received RipEntry AND added to table.\nNew table: \n")
-			ipStack.PrintForwardingTable()
 			ipStack.UpdateForwardingTable(ripEntry, hdr, "")
 			continue
 		} 
@@ -339,16 +338,14 @@ func (ipStack *IPStack) LongestPrefixMatch(dest netip.Addr) (*FwdEntry, netip.Ad
 		}
 	}
 	if maxLen == -1 {
-		return &FwdEntry{}, netip.Addr{}, false
-	}
-	if maxLen == 0 {
-		fmt.Printf("[IP] Longest prefix match is default route, recursing on nextHop...\n")
-		return ipStack.LongestPrefixMatch(longestMatchEntry.NextHop)
-	}
-	// TODO: potentially update to check entry for iface, if it's not there, recurse on nextHop until we find an entry with a valid iface or we hit default route (in which case we drop packet since no match)
-
-	// fmt.Printf("found best match %s on prefix %s\n", longestMatchEntry.InterfaceName, longestMatchEntry.Prefix.Addr())
-	return longestMatchEntry, dest, true
+        return nil, netip.Addr{}, false
+    }
+    // if route directly connected, ret
+    if longestMatchEntry.InterfaceName != "" {
+        return longestMatchEntry, dest, true
+    }
+    // else recurse on nextHop
+    return ipStack.LongestPrefixMatch(longestMatchEntry.NextHop)
 }
 
 // TODO: potentially move these serializers/deserializers to Protocol? idk

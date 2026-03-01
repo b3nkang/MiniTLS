@@ -84,6 +84,7 @@ func (stack *IPStack) SendPeriodicUpdate() {
 					cost = Infinity
 				}
 			}
+			// fmt.Printf("ADDING TO RIP FWDING: to %s, add prefix %s\n\n", neighbor.RouterIP.String(), entry.Prefix.String())
 			routesToSend = append(routesToSend, RipEntry{
 				Prefix: entry.Prefix,
 				Cost: uint32(cost),

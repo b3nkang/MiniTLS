@@ -86,11 +86,6 @@ func (stack *IPStack) Init(config *lnxconfig.IPConfig) error {
 		go iface.LinkLayerListen(stack.IncomingPacketChan)
 	}
 
-	// if you are router, start RIP
-	if config.RoutingMode == lnxconfig.RoutingTypeRIP {
-		go stack.UpdateLoop()
-	}
-
 	// ***************************************************************
 	// TODO: once online, we need to send RIP requests IMMEDIATELY
 	// ***************************************************************
@@ -387,6 +382,10 @@ func (ipStack *IPStack) LongestPrefixMatch(dest netip.Addr) (*FwdEntry, netip.Ad
         return longestMatchEntry, dest, true
     }
     // else recurse on nextHop
+	if longestMatchEntry.Cost >= Infinity {
+		fmt.Printf("[IP] LPM found match at %s, but the entry is offline. Dropping packet...\n", longestMatchEntry.Prefix.Addr().String())
+        return nil, netip.Addr{}, false
+	}
     return ipStack.LongestPrefixMatch(longestMatchEntry.NextHop)
 }
 

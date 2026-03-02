@@ -76,6 +76,7 @@ func (ipStack *IPStack) CheckForTimeouts() {
 				// already timed out, skip processing
 				continue
 			}
+			fmt.Printf("FOUND TIMEOUT: %s\n", prefix.Addr().String())
             timedOutRipEntries = append(timedOutRipEntries, RipEntry{ Cost: 16, Prefix: prefix })
 			entry.Cost = Infinity
 		}

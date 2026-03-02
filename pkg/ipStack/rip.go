@@ -22,7 +22,7 @@ func (stack *IPStack) InitRIP(config *lnxconfig.IPConfig) error {
 	info := RipInfo{
 		Neighbors: make([]RipNeighbour, 0),
 		RipTimeout: config.RipTimeoutThreshold,
-		RipUpdateRate: config.RipPeriodicUpdateRate, // TODO: CHANGE BACK RipPeriodicUpdateRate IN LNXCONFIG
+		RipUpdateRate: config.RipPeriodicUpdateRate,
 	}
 	/* pre-figure out interface name for each RIP neighbor to save time
 		in the future */

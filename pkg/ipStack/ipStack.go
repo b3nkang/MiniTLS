@@ -91,6 +91,10 @@ func (stack *IPStack) Init(config *lnxconfig.IPConfig) error {
 		go stack.UpdateLoop()
 	}
 
+	// ***************************************************************
+	// TODO: once online, we need to send RIP requests IMMEDIATELY
+	// ***************************************************************
+
 	return nil
 }
 
@@ -220,6 +224,11 @@ func (ipStack *IPStack) RunIPLayer() {
 func (ipStack *IPStack) HandleRipMessage(hdr *ipv4header.IPv4Header, messageBytes []byte) {
 	// fmt.Printf("[IP] Received RIP message, handling...\n> ")
 
+	// ***************************************************************
+	// TODO: this must be updated to check the command of ripInfo.
+	//		 if ripInfo is a request, we need to handle it by sending down the whole table back immediately
+	// ***************************************************************
+
 	ripMsg, err := DeserializeRipMessage(messageBytes)
 	if err != nil {
 		fmt.Printf("[IP] Received malformed RIP data, unable to deserialize. Error: %s\n> ", err)
@@ -239,9 +248,16 @@ func (ipStack *IPStack) HandleRipMessage(hdr *ipv4header.IPv4Header, messageByte
 	for _, ripEntry := range ripMsg.Entries {
 		fmt.Printf("entry: %s can reach %s with cost=%d\n", hdr.Src.String(), ripEntry.Prefix.String(), int(ripEntry.Cost))
 		currFwdEntry, exists := ipStack.ForwardingTable[ripEntry.Prefix]
+		// update cost
+		var ripEntryCost uint32
+		if ripEntry.Cost < Infinity {
+			ripEntryCost += 1
+		} else {
+			ripEntryCost = Infinity
+		}
 		// check if exists, if not, add
 		if !exists {
-			ipStack.UpdateForwardingTable(ripEntry, hdr, "")
+			ipStack.UpdateForwardingTable(ripEntry, hdr, "", ripEntryCost)
 			changedEntries = append(changedEntries, ripEntry)
 			continue
 		} 
@@ -252,19 +268,18 @@ func (ipStack *IPStack) HandleRipMessage(hdr *ipv4header.IPv4Header, messageByte
 		}
 		// entry exists:
 		// if lower cost, just update
-		ripEntryCost := ripEntry.Cost+1
 		currFwdEntryCost := currFwdEntry.Cost
 		if ripEntryCost < currFwdEntryCost {
-			ipStack.UpdateForwardingTable(ripEntry, hdr, "")
+			ipStack.UpdateForwardingTable(ripEntry, hdr, "", ripEntryCost)
 			changedEntries = append(changedEntries, ripEntry)
 			continue
 		}
 		// else, if it doesn't equal
-		// TODO: NOTE this is WRONG for SH/PR, UPDATE later but naive implementation for now
 		if ripEntryCost > currFwdEntryCost {
-			// if the next hops are diff, topology changed, updated
+			// If the route we currently use is THROUGH the neighbor who is talking to us,
+			// we MUST take their new metric (even if worse / INF), and refresh LastUpdated.
 			if hdr.Src == currFwdEntry.NextHop {
-				ipStack.UpdateForwardingTable(ripEntry, hdr, "")
+				ipStack.UpdateForwardingTable(ripEntry, hdr, "", ripEntryCost)
 				changedEntries = append(changedEntries, ripEntry)
 				continue
 			} 
@@ -272,10 +287,9 @@ func (ipStack *IPStack) HandleRipMessage(hdr *ipv4header.IPv4Header, messageByte
 		}
 		// else if everything is the same
 		if ripEntryCost == currFwdEntryCost && hdr.Src == currFwdEntry.NextHop {
-			currFwdEntry.LastUpdated = time.Now() 	// TODO: double check this is what we want
+			currFwdEntry.LastUpdated = time.Now()
 		}
 	}
-
 	/* if our costs changed, trigger a new RIPMessage to be sent */
 	if len(changedEntries) != 0 {
 		ipStack.SendTriggeredUpdate(changedEntries)
@@ -285,7 +299,6 @@ func (ipStack *IPStack) HandleRipMessage(hdr *ipv4header.IPv4Header, messageByte
 // ********************** DELIVERY OR FORWARDING LOGIC **********************
 // TODO: packet only being passed currently for light logging. remove once no longer needed
 /* IP Forwarding method: 
-
 */
 func (ipStack *IPStack) IPForwarding(hdr *ipv4header.IPv4Header, message string, packet ll.IPPacket) {	
 	/* print out all the stuff */
@@ -323,6 +336,13 @@ func (ipStack *IPStack) IPForwarding(hdr *ipv4header.IPv4Header, message string,
 		return
 	}
 	fmt.Printf("[IP] Longest prefix match found on %s\n", entry.InterfaceName)
+
+	// if cost is infinity, the route is offline, so drop
+	if entry.Cost >= Infinity {
+		fmt.Printf("[IP] Entry in FwdTable found, but cost was %d, >= INF. Dropping packet...\n> ", entry.Cost)
+		return
+	}
+
 	// check how to forward
 	switch entry.Type {
 		case SourceTypeLocal:
@@ -455,13 +475,13 @@ func DeserializeAndValidatePacket(packet ll.IPPacket) ([]byte, *ipv4header.IPv4H
 }
 
 // updates or creates a new FwdEntry given an incoming RipEntry
-func (ipStack *IPStack) UpdateForwardingTable(ripEntry RipEntry, hdr *ipv4header.IPv4Header, ifaceName string) {
+func (ipStack *IPStack) UpdateForwardingTable(ripEntry RipEntry, hdr *ipv4header.IPv4Header, ifaceName string, ripEntryCost uint32) {
 	ipStack.ForwardingTable[ripEntry.Prefix] = &FwdEntry{
 		Prefix: ripEntry.Prefix,
 		NextHop: hdr.Src, 				// whom we're receiving this ripMsg from
 		InterfaceName: ifaceName,
 		Type: SourceTypeRIP,
-		Cost: ripEntry.Cost + 1,
-		LastUpdated: time.Now(),		// TODO: double check this is what we want
+		Cost: ripEntryCost,
+		LastUpdated: time.Now(),
 	}
 }

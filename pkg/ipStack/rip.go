@@ -47,6 +47,45 @@ func (stack *IPStack) InitRIP(config *lnxconfig.IPConfig) error {
 	return nil
 }
 
+// highest-level function to spin up a checker for timed-out fwdEntries
+func (ipStack *IPStack) TimeoutLoop() {
+	ticker := time.NewTicker(ipStack.RipInfo.RipTimeout / 6) // 2 seconds
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <- ticker.C:
+			ipStack.CheckForTimeouts()
+		}
+	}
+}
+
+func (ipStack *IPStack) CheckForTimeouts() {
+	ipStack.mu.Lock()
+    defer ipStack.mu.Unlock()
+
+    now := time.Now()
+    var timedOutRipEntries []RipEntry
+	for prefix, entry := range ipStack.ForwardingTable {
+		// if not rip no timeouts
+		if entry.Type != SourceTypeRIP {
+			continue
+		}
+		if now.Sub(entry.LastUpdated) >= ipStack.RipInfo.RipTimeout {
+			if entry.Cost >= Infinity {
+				// already timed out, skip processing
+				continue
+			}
+            timedOutRipEntries = append(timedOutRipEntries, RipEntry{ Cost: 16, Prefix: prefix })
+			entry.Cost = Infinity
+		}
+	}
+    if len(timedOutRipEntries) > 0 {
+        go ipStack.SendTriggeredUpdate(timedOutRipEntries)
+    }
+}
+
+
 /* what main function will call to run goroutine */
 func (stack *IPStack) UpdateLoop() {
 	/* if we wait for first tick, update won't be sent for 5 seconds so must sent at t=0 */

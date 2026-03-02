@@ -61,16 +61,19 @@ func (ipStack *IPStack) TimeoutLoop() {
 }
 
 func (ipStack *IPStack) CheckForTimeouts() {
+	/* protect forwarding table */
 	ipStack.mu.Lock()
     defer ipStack.mu.Unlock()
 
     now := time.Now()
+	/* for storing the messages we will send to RIP neighbors about down routers */
     var timedOutRipEntries []RipEntry
 	for prefix, entry := range ipStack.ForwardingTable {
-		// if not rip no timeouts
+		/* must have recieved through rip to have a timeout field */
 		if entry.Type != SourceTypeRIP {
 			continue
 		}
+		/* if RipTimout maximum has been exceeded */
 		if now.Sub(entry.LastUpdated) >= ipStack.RipInfo.RipTimeout {
 			if entry.Cost >= Infinity {
 				// already timed out, skip processing
@@ -142,6 +145,7 @@ func (stack *IPStack) SendPeriodicUpdate() {
 	}
 }
 
+/* sends specific updates with changed information to RIP neighbors */
 func (stack *IPStack) SendTriggeredUpdate(entries []RipEntry) {
 	fmt.Println("Sending triggered update")
 	message := RipMessage{

@@ -25,6 +25,9 @@ l-r3h2:
 lp:
 	util/vnet_run loop
 
+dabc:
+	util/vnet_run d-abc
+
 # # TODO: update to work with vnet_run once flushed out more
 
 # Here are our favorite vnet_run commands (replace <net dir> with a directory that has lnx files):

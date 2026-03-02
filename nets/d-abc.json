@@ -1,0 +1,50 @@
+{
+    "nodes": [
+	{
+	    "name": "d",
+	    "type": "host"
+	},
+	{
+	    "name": "a",
+	    "type": "router"
+	},
+	{
+	    "name": "b",
+	    "type": "router"
+	},
+	{
+	    "name": "c",
+	    "type": "router"
+	}
+    ],
+    "networks": [
+	{
+	    "name": "d-a",
+	    "links": [
+		"d",
+		"a"
+	    ]
+	},
+	{
+	    "name": "a-b",
+	    "links": [
+		"a",
+		"b"
+	    ]
+	},
+	{
+	    "name": "b-c",
+	    "links": [
+		"c",
+		"b"
+	    ]
+	},
+	{
+	    "name": "c-a",
+	    "links": [
+		"c",
+		"a"
+	    ]
+	}
+    ]
+}

@@ -2,5 +2,6 @@
  "a": "router",
  "b": "router",
  "c": "router",
- "d": "host"
+ "dh": "host",
+ "dr": "router"
 }

@@ -1,8 +1,12 @@
 {
     "nodes": [
 	{
-	    "name": "d",
+	    "name": "dh",
 	    "type": "host"
+	},
+	{
+	    "name": "dr",
+	    "type": "router"
 	},
 	{
 	    "name": "a",
@@ -19,9 +23,16 @@
     ],
     "networks": [
 	{
-	    "name": "d-a",
+	    "name": "dh-dr",
 	    "links": [
-		"d",
+		"dr",
+		"dh"
+	    ]
+	},
+	{
+	    "name": "dr-a",
+	    "links": [
+		"dr",
 		"a"
 	    ]
 	},

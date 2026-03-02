@@ -1,6 +1,7 @@
 package linkLayer
 
 import (
+	"fmt"
 	"log"
 	"net"
 )
@@ -9,6 +10,15 @@ const MaxMessageSize = 1400
 
 /* send an IP packet (IPV4 Header + bytes message) via UDP Link Layer */
 func (iface *Interface) LinkLayerSend(udpDest *net.UDPAddr, bytes []byte) {
+	// if !iface.Up{
+	// 	fmt.Printf("Interface: %s down\n", iface.Name)
+	// } else{
+	// 	fmt.Printf("Interface: %s up\n", iface.Name)
+	// }
+	if !iface.Up {
+		fmt.Printf("Dropping packet before sending on down interface: %s", iface.Name)
+		return
+	}
 	_, err := iface.Conn.WriteToUDP(bytes, udpDest)
 	if err != nil {
 		log.Panicln("Error writing to socket: ", err)
@@ -29,7 +39,10 @@ func (iface *Interface) LinkLayerListen(ipStackChan chan IPPacket) error {
 		}
 		
 		// fmt.Printf("[LL] Received IP packet from %s. Forwarding to IP Stack...\n", sourceAddr.String())
-
+		if !iface.Up {
+			fmt.Printf("Dropping packet before receiving on down interface: %s", iface.Name)
+			continue
+		}
 		packet := IPPacket{
 			SrcIfaceAddr: sourceAddr,
 			Data: buffer,

@@ -68,10 +68,14 @@ func (stack *IPStack) HandleCommand(line string) {
 	case "lr":
 		stack.ListRoutes()
 	/* disable interface down <ifname> */
-	// case "down":
+	case "down":
+		stack.IFDown(parts[1])
 	/* enable interface up <ifname> */
-	// case "up":
-	/* not an actual requirement */
+	case "up":
+		stack.IFUp(parts[1])
+	/* not actual requirements */
+	case "me":
+		stack.PrintInterfacesForDebugging()
 	case "q":
 		os.Exit(0)
 	default:

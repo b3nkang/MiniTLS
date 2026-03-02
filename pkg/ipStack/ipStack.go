@@ -57,6 +57,7 @@ func (stack *IPStack) Init(config *lnxconfig.IPConfig) error {
 			IP: ifx.AssignedIP,
 			Conn: conn,
 			Neighbours: make(map[netip.Addr]*ll.Neighbour),
+			Up: true,
 		}
 		
 		stack.Interfaces[ifx.Name] = iface
@@ -233,9 +234,7 @@ func (ipStack *IPStack) HandleRipMessage(hdr *ipv4header.IPv4Header, messageByte
 	// lock while we update table
 	ipStack.mu.Lock()
 	defer ipStack.mu.Unlock()
-
-	// ipStack.PrintForwardingTable() 
-	ipStack.ListRoutes() /* more useful imo */
+	ipStack.ListRoutes() 
 
 	/* for keeping track of changed entries */
 	changedEntries := make([]RipEntry, 0)
@@ -246,7 +245,7 @@ func (ipStack *IPStack) HandleRipMessage(hdr *ipv4header.IPv4Header, messageByte
 		// update cost
 		var ripEntryCost uint32
 		if ripEntry.Cost < Infinity {
-			ripEntryCost += 1
+			ripEntryCost += ripEntry.Cost + 1
 		} else {
 			ripEntryCost = Infinity
 		}
@@ -305,6 +304,11 @@ func (ipStack *IPStack) IPForwarding(hdr *ipv4header.IPv4Header, message string,
 	finalDest := hdr.Dst
 	for _, iface := range ipStack.Interfaces {
 		if iface.IP == finalDest {
+			/* if we received a packet, but interface is down, drop packet */
+			if !iface.Up {
+				fmt.Printf("Received packet on down interface: %s. Dropping packet.\n", iface.Name)
+				return
+			}
 			fmt.Printf("[IP] packet destination reached on interface %s\n", iface.Name)
 			destFound = true
 			// HANDLE TEST MESSAGE HERE (just print tho)
@@ -344,6 +348,13 @@ func (ipStack *IPStack) IPForwarding(hdr *ipv4header.IPv4Header, message string,
 			// if direct, seek through neighbours and send 
 			fmt.Printf("[IP] Match prefix is directly connected. Forwarding to prefix %s for dest %s\n", entry.Prefix.String(), hdr.Dst.String())
 			iface := ipStack.Interfaces[entry.InterfaceName]
+
+			/* if interface is down, drop packet */
+			if !iface.Up {
+				fmt.Printf("Required to forward packet on down interface: %s. Dropping packet.\n", iface.Name)
+				return
+			}
+
 			nextDestAsNeighbour := iface.Neighbours[nextDest]
 			if nextDestAsNeighbour == nil {
 				fmt.Printf("[IP] Entry in FwdTable found, LOCAL case, but neighbor <%s> doesn't exist. Dropping packet...\n> ", nextDest.String())
@@ -483,4 +494,27 @@ func (ipStack *IPStack) UpdateForwardingTable(ripEntry RipEntry, hdr *ipv4header
 		Cost: ripEntryCost,
 		LastUpdated: time.Now(),
 	}
+}
+
+
+/******* INTERFACE UP/DOWN FUNCTIONALITY ********/
+
+
+func (stack *IPStack) IFDown(ifaceName string) error {
+	iface, exists := stack.Interfaces[ifaceName]
+	if !exists {
+		return errors.New("invalid interface name")
+	}
+	iface.Up = false
+	return  nil
+}
+
+
+func (stack *IPStack) IFUp(ifaceName string) error {
+	iface, exists := stack.Interfaces[ifaceName]
+	if !exists {
+		return errors.New("invalid interface name")
+	}
+	iface.Up = true
+	return  nil
 }

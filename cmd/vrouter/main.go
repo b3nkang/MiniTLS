@@ -33,7 +33,9 @@ func main() {
 	go ipStack.RunIPLayer()
 
 	/* start RIP - uncomment when RIP messages can actually be received */
-	// go ipStack.UpdateLoop()
+	go ipStack.UpdateLoop()
+	// start listening for timeout
+	go ipStack.TimeoutLoop()
 
 	/* start REPL */
 	ipStack.StartREPL()

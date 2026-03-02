@@ -15,6 +15,7 @@ type Interface struct {
 	IP 			netip.Addr
 	Conn  		*net.UDPConn  						/* opened UDP socket */
 	Neighbours 	map[netip.Addr]*Neighbour			/* neighbour IP addr : Neighbour() */
+	Up 			bool								/* is interface up */
 }
 
 /*

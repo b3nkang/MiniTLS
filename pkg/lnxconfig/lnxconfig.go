@@ -107,7 +107,7 @@ var LnxConfig = IPConfig{
 		netip.MustParseAddr("10.10.1.2"),
 	},
 
-	RipPeriodicUpdateRate: 15 * time.Second, // TODO: CHANGE BACK RipPeriodicUpdateRate
+	RipPeriodicUpdateRate: 5 * time.Second,
 	RipTimeoutThreshold:   12 * time.Second,
 
 	TcpRtoMin: 1 * time.Millisecond,

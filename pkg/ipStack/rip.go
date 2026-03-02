@@ -22,7 +22,7 @@ func (stack *IPStack) InitRIP(config *lnxconfig.IPConfig) error {
 	info := RipInfo{
 		Neighbors: make([]RipNeighbour, 0),
 		RipTimeout: config.RipTimeoutThreshold,
-		RipUpdateRate: config.RipPeriodicUpdateRate, // TODO: CHANGE BACK RipPeriodicUpdateRate IN LNXCONFIG
+		RipUpdateRate: config.RipPeriodicUpdateRate,
 	}
 	/* pre-figure out interface name for each RIP neighbor to save time
 		in the future */
@@ -46,6 +46,49 @@ func (stack *IPStack) InitRIP(config *lnxconfig.IPConfig) error {
 	stack.RipInfo = info
 	return nil
 }
+
+// highest-level function to spin up a checker for timed-out fwdEntries
+func (ipStack *IPStack) TimeoutLoop() {
+	ticker := time.NewTicker(ipStack.RipInfo.RipTimeout / 6) // 2 seconds
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <- ticker.C:
+			ipStack.CheckForTimeouts()
+		}
+	}
+}
+
+func (ipStack *IPStack) CheckForTimeouts() {
+	/* protect forwarding table */
+	ipStack.mu.Lock()
+    defer ipStack.mu.Unlock()
+
+    now := time.Now()
+	/* for storing the messages we will send to RIP neighbors about down routers */
+    var timedOutRipEntries []RipEntry
+	for prefix, entry := range ipStack.ForwardingTable {
+		/* must have recieved through rip to have a timeout field */
+		if entry.Type != SourceTypeRIP {
+			continue
+		}
+		/* if RipTimout maximum has been exceeded */
+		if now.Sub(entry.LastUpdated) >= ipStack.RipInfo.RipTimeout {
+			if entry.Cost >= Infinity {
+				// already timed out, skip processing
+				continue
+			}
+			fmt.Printf("FOUND TIMEOUT: %s\n", prefix.Addr().String())
+            timedOutRipEntries = append(timedOutRipEntries, RipEntry{ Cost: 16, Prefix: prefix })
+			entry.Cost = Infinity
+		}
+	}
+    if len(timedOutRipEntries) > 0 {
+        go ipStack.SendTriggeredUpdate(timedOutRipEntries)
+    }
+}
+
 
 /* what main function will call to run goroutine */
 func (stack *IPStack) UpdateLoop() {
@@ -90,12 +133,31 @@ func (stack *IPStack) SendPeriodicUpdate() {
 				Cost: uint32(cost),
 			})
 		}
-		RipMessage := RipMessage{
+		ripMessage := RipMessage{
 			Command: RIPResponse,
 			NumEntries: uint16(len(routesToSend)),
 			Entries: routesToSend,
 		}
-		stack.SendRipMessage(RipMessage, neighbor)
+		err := stack.SendRipMessage(ripMessage, neighbor)
+		if err != nil {
+			fmt.Printf("Error sending periodic update to Neighbor: $%s. Just gonna keep going tho\n", neighbor.RouterIP.String())
+		}
+	}
+}
+
+/* sends specific updates with changed information to RIP neighbors */
+func (stack *IPStack) SendTriggeredUpdate(entries []RipEntry) {
+	fmt.Println("Sending triggered update")
+	message := RipMessage{
+		Command: RIPResponse,
+		NumEntries: uint16(len(entries)),
+		Entries: entries,
+	}
+	for _, neighbor := range stack.RipInfo.Neighbors {
+		err := stack.SendRipMessage(message, neighbor)
+		if err != nil {
+			fmt.Printf("Error sending triggered update to Neighbor: $%s. Just gonna keep going tho\n", neighbor.RouterIP.String())
+		}
 	}
 }
 

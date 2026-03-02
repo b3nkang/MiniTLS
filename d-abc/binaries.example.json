@@ -1,0 +1,17 @@
+{
+ "a": {
+  "binary_path": "./vrouter"
+ },
+ "b": {
+  "binary_path": "./vrouter"
+ },
+ "c": {
+  "binary_path": "./vrouter"
+ },
+ "dh": {
+  "binary_path": "./vhost"
+ },
+ "dr": {
+  "binary_path": "./vrouter"
+ }
+}

@@ -1,0 +1,61 @@
+{
+    "nodes": [
+	{
+	    "name": "dh",
+	    "type": "host"
+	},
+	{
+	    "name": "dr",
+	    "type": "router"
+	},
+	{
+	    "name": "a",
+	    "type": "router"
+	},
+	{
+	    "name": "b",
+	    "type": "router"
+	},
+	{
+	    "name": "c",
+	    "type": "router"
+	}
+    ],
+    "networks": [
+	{
+	    "name": "dh-dr",
+	    "links": [
+		"dr",
+		"dh"
+	    ]
+	},
+	{
+	    "name": "dr-a",
+	    "links": [
+		"dr",
+		"a"
+	    ]
+	},
+	{
+	    "name": "a-b",
+	    "links": [
+		"a",
+		"b"
+	    ]
+	},
+	{
+	    "name": "b-c",
+	    "links": [
+		"c",
+		"b"
+	    ]
+	},
+	{
+	    "name": "c-a",
+	    "links": [
+		"c",
+		"a"
+	    ]
+	}
+    ]
+}

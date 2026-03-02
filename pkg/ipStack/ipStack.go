@@ -57,6 +57,7 @@ func (stack *IPStack) Init(config *lnxconfig.IPConfig) error {
 			IP: ifx.AssignedIP,
 			Conn: conn,
 			Neighbours: make(map[netip.Addr]*ll.Neighbour),
+			Up: true,
 		}
 		
 		stack.Interfaces[ifx.Name] = iface
@@ -86,10 +87,9 @@ func (stack *IPStack) Init(config *lnxconfig.IPConfig) error {
 		go iface.LinkLayerListen(stack.IncomingPacketChan)
 	}
 
-	// if you are router, start RIP
-	if config.RoutingMode == lnxconfig.RoutingTypeRIP {
-		go stack.UpdateLoop()
-	}
+	// ***************************************************************
+	// TODO: once online, we need to send RIP requests IMMEDIATELY
+	// ***************************************************************
 
 	return nil
 }
@@ -204,7 +204,8 @@ func (ipStack *IPStack) RunIPLayer() {
 		}
 		switch hdr.Protocol {
 		case ProtocolTypeTest:
-			ipStack.HandleTestMessage(hdr, string(message), packet)
+			ipStack.IPForwarding(hdr, string(message), packet)
+		/* okay because RIP will always be going just 1 hop */
 		case ProtocolTypeRIP:
 			ipStack.HandleRipMessage(hdr, message)
 		default:
@@ -215,8 +216,14 @@ func (ipStack *IPStack) RunIPLayer() {
 }
 
 // ******************** HANDLE INCOMING RIP MESSAGE LOGIC *******************
+/* only called once we know RIP message has arrived at final dest */
 func (ipStack *IPStack) HandleRipMessage(hdr *ipv4header.IPv4Header, messageBytes []byte) {
 	// fmt.Printf("[IP] Received RIP message, handling...\n> ")
+
+	// ***************************************************************
+	// TODO: this must be updated to check the command of ripInfo.
+	//		 if ripInfo is a request, we need to handle it by sending down the whole table back immediately
+	// ***************************************************************
 
 	ripMsg, err := DeserializeRipMessage(messageBytes)
 	if err != nil {
@@ -227,13 +234,25 @@ func (ipStack *IPStack) HandleRipMessage(hdr *ipv4header.IPv4Header, messageByte
 	// lock while we update table
 	ipStack.mu.Lock()
 	defer ipStack.mu.Unlock()
-	ipStack.PrintForwardingTable()
+	ipStack.ListRoutes() 
+
+	/* for keeping track of changed entries */
+	changedEntries := make([]RipEntry, 0)
+
 	for _, ripEntry := range ripMsg.Entries {
+		fmt.Printf("entry: %s can reach %s with cost=%d\n", hdr.Src.String(), ripEntry.Prefix.String(), int(ripEntry.Cost))
 		currFwdEntry, exists := ipStack.ForwardingTable[ripEntry.Prefix]
+		// update cost
+		var ripEntryCost uint32
+		if ripEntry.Cost < Infinity {
+			ripEntryCost += ripEntry.Cost + 1
+		} else {
+			ripEntryCost = Infinity
+		}
 		// check if exists, if not, add
 		if !exists {
-			fmt.Printf("[RIP] Received RipEntry AND added to table.\nNew table: \n")
-			ipStack.UpdateForwardingTable(ripEntry, hdr, "")
+			ipStack.UpdateForwardingTable(ripEntry, hdr, "", ripEntryCost)
+			changedEntries = append(changedEntries, ripEntry)
 			continue
 		} 
 		// if it already is in table, check if we can even update it
@@ -243,32 +262,39 @@ func (ipStack *IPStack) HandleRipMessage(hdr *ipv4header.IPv4Header, messageByte
 		}
 		// entry exists:
 		// if lower cost, just update
-		ripEntryCost := ripEntry.Cost+1
 		currFwdEntryCost := currFwdEntry.Cost
 		if ripEntryCost < currFwdEntryCost {
-			ipStack.UpdateForwardingTable(ripEntry, hdr, "")
+			ipStack.UpdateForwardingTable(ripEntry, hdr, "", ripEntryCost)
+			changedEntries = append(changedEntries, ripEntry)
 			continue
 		}
 		// else, if it doesn't equal
-		// TODO: NOTE this is WRONG for SH/PR, UPDATE later but naive implementation for now
-		if ripEntryCost != currFwdEntryCost {
-			// if the next hops are diff, topology changed, updated
-			if hdr.Src != currFwdEntry.NextHop {
-				ipStack.UpdateForwardingTable(ripEntry, hdr, "")
+		if ripEntryCost > currFwdEntryCost {
+			// If the route we currently use is THROUGH the neighbor who is talking to us,
+			// we MUST take their new metric (even if worse / INF), and refresh LastUpdated.
+			if hdr.Src == currFwdEntry.NextHop {
+				ipStack.UpdateForwardingTable(ripEntry, hdr, "", ripEntryCost)
+				changedEntries = append(changedEntries, ripEntry)
 				continue
 			} 
 			// else, curr cost is better, ignore
 		}
 		// else if everything is the same
 		if ripEntryCost == currFwdEntryCost && hdr.Src == currFwdEntry.NextHop {
-			currFwdEntry.LastUpdated = time.Now() 	// TODO: double check this is what we want
+			currFwdEntry.LastUpdated = time.Now()
 		}
+	}
+	/* if our costs changed, trigger a new RIPMessage to be sent */
+	if len(changedEntries) != 0 {
+		ipStack.SendTriggeredUpdate(changedEntries)
 	}
 }
 
 // ********************** DELIVERY OR FORWARDING LOGIC **********************
 // TODO: packet only being passed currently for light logging. remove once no longer needed
-func (ipStack *IPStack) HandleTestMessage(hdr *ipv4header.IPv4Header, message string, packet ll.IPPacket) {	
+/* IP Forwarding method: 
+*/
+func (ipStack *IPStack) IPForwarding(hdr *ipv4header.IPv4Header, message string, packet ll.IPPacket) {	
 	/* print out all the stuff */
 	fmt.Printf("[IP] Received IP packet from %s\nHeader:  %v\nChecksum:  OK\nMessage:  %s\n",
 		packet.SrcIfaceAddr.String(), hdr, string(message))
@@ -278,9 +304,14 @@ func (ipStack *IPStack) HandleTestMessage(hdr *ipv4header.IPv4Header, message st
 	finalDest := hdr.Dst
 	for _, iface := range ipStack.Interfaces {
 		if iface.IP == finalDest {
+			/* if we received a packet, but interface is down, drop packet */
+			if !iface.Up {
+				fmt.Printf("Received packet on down interface: %s. Dropping packet.\n", iface.Name)
+				return
+			}
 			fmt.Printf("[IP] packet destination reached on interface %s\n", iface.Name)
 			destFound = true
-			// TODO: call some handler
+			// HANDLE TEST MESSAGE HERE (just print tho)
 			break
 		}
 	}
@@ -304,25 +335,42 @@ func (ipStack *IPStack) HandleTestMessage(hdr *ipv4header.IPv4Header, message st
 		return
 	}
 	fmt.Printf("[IP] Longest prefix match found on %s\n", entry.InterfaceName)
+
+	// if cost is infinity, the route is offline, so drop
+	if entry.Cost >= Infinity {
+		fmt.Printf("[IP] Entry in FwdTable found, but cost was %d, >= INF. Dropping packet...\n> ", entry.Cost)
+		return
+	}
+
 	// check how to forward
 	switch entry.Type {
-	case SourceTypeLocal:
-		// if direct, seek through neighbours and send 
-		fmt.Printf("[IP] Match prefix is directly connected. Forwarding to prefix %s for dest %s\n", entry.Prefix.String(), hdr.Dst.String())
-		iface := ipStack.Interfaces[entry.InterfaceName]
-		nextDestAsNeighbour := iface.Neighbours[nextDest]
-		if nextDestAsNeighbour == nil {
-			fmt.Printf("[IP] We hit default forwarding case, but the next hop address <%s> does not exist. Dropping packet...\n> ", nextDest.String())
-			return
-		}
-		nextDestAsUDPAddr := net.UDPAddrFromAddrPort(nextDestAsNeighbour.UDPAddr)
-		bytesToSend := SerializePacket(iface.IP, finalDest, []byte(message), ProtocolTypeTest, hdr.TTL, false)
-		iface.LinkLayerSend(nextDestAsUDPAddr, bytesToSend)
-	case SourceTypeRIP:
-		// if via RIP, forward to next hop, complete once next hop-updating logic is implemented
-		// TODO: verify after RIP handling complete that this is still necessary; LPM recursion may handle this already
-	default:
-		fmt.Printf("[IP] Found a match but could not send, bad entry type. Error should not happen. Dropping packet...\n> ")
+		case SourceTypeLocal:
+			// if direct, seek through neighbours and send 
+			fmt.Printf("[IP] Match prefix is directly connected. Forwarding to prefix %s for dest %s\n", entry.Prefix.String(), hdr.Dst.String())
+			iface := ipStack.Interfaces[entry.InterfaceName]
+
+			/* if interface is down, drop packet */
+			if !iface.Up {
+				fmt.Printf("Required to forward packet on down interface: %s. Dropping packet.\n", iface.Name)
+				return
+			}
+
+			nextDestAsNeighbour := iface.Neighbours[nextDest]
+			if nextDestAsNeighbour == nil {
+				fmt.Printf("[IP] Entry in FwdTable found, LOCAL case, but neighbor <%s> doesn't exist. Dropping packet...\n> ", nextDest.String())
+				return
+			}
+			/* get neighbor's UDP address */
+			nextDestAsUDPAddr := net.UDPAddrFromAddrPort(nextDestAsNeighbour.UDPAddr)
+			bytesToSend := SerializePacket(iface.IP, finalDest, []byte(message), ProtocolTypeTest, hdr.TTL, false)
+			iface.LinkLayerSend(nextDestAsUDPAddr, bytesToSend)
+		/* we are a router and we learned about this route through RIP */
+		case SourceTypeRIP:
+			fmt.Println("[IP] BAD THING HAPPENED THIS SHOULDN'T HAPPEN hit SourceTypeRIP case in IPForwarding")
+			// if via RIP, forward to next hop, complete once next hop-updating logic is implemented
+			// TODO: verify after RIP handling complete that this is still necessary; LPM recursion may handle this already
+		default:
+			fmt.Printf("[IP] Found a match but could not send, bad entry type. Error should not happen. Dropping packet...\n> ")
 	}
 	fmt.Printf("> ")
 }
@@ -345,6 +393,10 @@ func (ipStack *IPStack) LongestPrefixMatch(dest netip.Addr) (*FwdEntry, netip.Ad
         return longestMatchEntry, dest, true
     }
     // else recurse on nextHop
+	if longestMatchEntry.Cost >= Infinity {
+		fmt.Printf("[IP] LPM found match at %s, but the entry is offline. Dropping packet...\n", longestMatchEntry.Prefix.Addr().String())
+        return nil, netip.Addr{}, false
+	}
     return ipStack.LongestPrefixMatch(longestMatchEntry.NextHop)
 }
 
@@ -433,13 +485,36 @@ func DeserializeAndValidatePacket(packet ll.IPPacket) ([]byte, *ipv4header.IPv4H
 }
 
 // updates or creates a new FwdEntry given an incoming RipEntry
-func (ipStack *IPStack) UpdateForwardingTable(ripEntry RipEntry, hdr *ipv4header.IPv4Header, ifaceName string) {
+func (ipStack *IPStack) UpdateForwardingTable(ripEntry RipEntry, hdr *ipv4header.IPv4Header, ifaceName string, ripEntryCost uint32) {
 	ipStack.ForwardingTable[ripEntry.Prefix] = &FwdEntry{
 		Prefix: ripEntry.Prefix,
 		NextHop: hdr.Src, 				// whom we're receiving this ripMsg from
 		InterfaceName: ifaceName,
 		Type: SourceTypeRIP,
-		Cost: ripEntry.Cost + 1,
-		LastUpdated: time.Now(),		// TODO: double check this is what we want
+		Cost: ripEntryCost,
+		LastUpdated: time.Now(),
 	}
+}
+
+
+/******* INTERFACE UP/DOWN FUNCTIONALITY ********/
+
+
+func (stack *IPStack) IFDown(ifaceName string) error {
+	iface, exists := stack.Interfaces[ifaceName]
+	if !exists {
+		return errors.New("invalid interface name")
+	}
+	iface.Up = false
+	return  nil
+}
+
+
+func (stack *IPStack) IFUp(ifaceName string) error {
+	iface, exists := stack.Interfaces[ifaceName]
+	if !exists {
+		return errors.New("invalid interface name")
+	}
+	iface.Up = true
+	return  nil
 }

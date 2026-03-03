@@ -5,6 +5,8 @@ import (
 	"net/netip"
 	"sync"
 	"time"
+
+	ipv4header "github.com/brown-csci1680/iptcp-headers"
 )
 
 /*
@@ -20,6 +22,7 @@ type IPStack struct {
 	IncomingPacketChan 	chan ll.IPPacket			/* for listener goroutine to tell main thread that we got a package */
 	RipInfo 			RipInfo						/* for routers to store RipInfo */
 	mu 					sync.Mutex 					/* protect forwarding table */
+	recvHandlers 		map[int]ReceiveHandler		/* deal with receiving packets */
 }
 
 /*
@@ -51,6 +54,9 @@ type FwdEntry struct {
 	Cost 			uint32 			/* for RIP */
 	LastUpdated 	time.Time 		/* for RIP */
 }
+
+/* Function that can be registered for handling final dest packets */
+type ReceiveHandler func(hdr *ipv4header.IPv4Header, payload []byte)
 
 // ************************************************************
 // *********************** RIP TYPES **************************

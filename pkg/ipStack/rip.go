@@ -10,6 +10,8 @@ import (
 	"net"
 	"net/netip"
 	"time"
+
+	ipv4header "github.com/brown-csci1680/iptcp-headers"
 )
 const (
     RIPRequest  = 1
@@ -17,8 +19,15 @@ const (
 	Infinity = 16
 )
 
-/* Init RIP Neighbor Information and Routes */
-func (stack *IPStack) InitRIP(config *lnxconfig.IPConfig) error {
+/* Init RIP routes, RIP Neighbor Information and Routes */
+func (stack *IPStack) initRIP(config *lnxconfig.IPConfig) error {
+	/* mark static routes as cost = 0 (not done for hosts) */
+	for _, entry := range stack.ForwardingTable {
+		if entry.Type == SourceTypeStatic {
+			entry.Cost = 0
+		}
+	}
+
 	info := RipInfo{
 		Neighbors: make([]RipNeighbour, 0),
 		RipTimeout: config.RipTimeoutThreshold,
@@ -92,8 +101,11 @@ func (ipStack *IPStack) CheckForTimeouts() {
 
 /* what main function will call to run goroutine */
 func (stack *IPStack) UpdateLoop() {
+	/* first, request all our neighbors to send us RIP messages */
+	stack.sendRIPRequest()
+
 	/* if we wait for first tick, update won't be sent for 5 seconds so must sent at t=0 */
-	stack.SendPeriodicUpdate()
+	stack.sendPeriodicUpdate()
 	
 	/* now start ticker loop */
 	ticker := time.NewTicker(stack.RipInfo.RipUpdateRate)
@@ -102,14 +114,26 @@ func (stack *IPStack) UpdateLoop() {
 	for {
 		select {
 		case <- ticker.C:
-			stack.SendPeriodicUpdate()
+			stack.sendPeriodicUpdate()
+		}
+	}
+}
+
+/* send every neighbor a RIP request */
+func (stack *IPStack) sendRIPRequest() {
+	request := RipMessage{
+		Command: RIPRequest,
+	}
+	for _, neighbor := range stack.RipInfo.Neighbors {
+		err := stack.SendRipMessage(request, neighbor)
+		if err != nil {
+			fmt.Printf("Error sending triggered update to Neighbor: $%s. Just gonna keep going tho\n", neighbor.RouterIP.String())
 		}
 	}
 }
 
 /* should be run at every timer tick -- sends periodic updates to neighbors */
-/* TODO: ADD SCANNING OF ROUTES LAST UPDATED FIELD */
-func (stack *IPStack) SendPeriodicUpdate() {
+func (stack *IPStack) sendPeriodicUpdate() {
 	/* protect Fwdtable */
 	stack.mu.Lock()
 	defer stack.mu.Unlock()
@@ -166,7 +190,6 @@ func (stack *IPStack) SendRipMessage(message RipMessage, neighbour RipNeighbour)
 	/* Marshal and send RIP Message to this neighbor */
 	bytes, err := message.Marshal()
 	if err != nil {
-		/* TODO: should we just continue here? answer: idk tbd -Ben */
 		fmt.Println("Error converting RIP Message into bytes.")
 		return err
 	}
@@ -182,6 +205,81 @@ func (stack *IPStack) SendRipMessage(message RipMessage, neighbour RipNeighbour)
 	packet := SerializePacket(sourceIP, destIP, bytes, ProtocolTypeRIP, TTLNew, true)
 	sourceInterface.LinkLayerSend(udpAddr, packet)
 	return nil
+}
+
+// ******************** HANDLE INCOMING RIP MESSAGE LOGIC *******************
+/* only called once we know RIP message has arrived at final dest */
+func (ipStack *IPStack) HandleRipMessage(hdr *ipv4header.IPv4Header, messageBytes []byte) {
+
+	ripMsg, err := DeserializeRipMessage(messageBytes)
+	if err != nil {
+		fmt.Printf("[IP] Received malformed RIP data, unable to deserialize. Error: %s\n> ", err)
+		return
+	}
+
+	/* see if we got a request, no need to mutate table, just send update */
+	if ripMsg.Command == RIPRequest {
+		ipStack.sendPeriodicUpdate()
+		return 
+	}
+
+	// lock while we update table
+	ipStack.mu.Lock()
+	defer ipStack.mu.Unlock()
+	ipStack.ListRoutes() 
+
+	/* for keeping track of changed entries */
+	changedEntries := make([]RipEntry, 0)
+
+	for _, ripEntry := range ripMsg.Entries {
+		fmt.Printf("entry: %s can reach %s with cost=%d\n", hdr.Src.String(), ripEntry.Prefix.String(), int(ripEntry.Cost))
+		currFwdEntry, exists := ipStack.ForwardingTable[ripEntry.Prefix]
+		// update cost
+		var ripEntryCost uint32
+		if ripEntry.Cost < Infinity {
+			ripEntryCost += ripEntry.Cost + 1
+		} else {
+			ripEntryCost = Infinity
+		}
+		// check if exists, if not, add
+		if !exists {
+			ipStack.UpdateForwardingTable(ripEntry, hdr, "", ripEntryCost)
+			changedEntries = append(changedEntries, ripEntry)
+			continue
+		} 
+		// if it already is in table, check if we can even update it
+		if currFwdEntry.Type != SourceTypeRIP {
+			// fmt.Printf("[RIP] Received RipEntry but FwdEntry was not of type RIP\n> ")
+			continue
+		}
+		// entry exists:
+		// if lower cost, just update
+		currFwdEntryCost := currFwdEntry.Cost
+		if ripEntryCost < currFwdEntryCost {
+			ipStack.UpdateForwardingTable(ripEntry, hdr, "", ripEntryCost)
+			changedEntries = append(changedEntries, ripEntry)
+			continue
+		}
+		// else, if it doesn't equal
+		if ripEntryCost > currFwdEntryCost {
+			// If the route we currently use is THROUGH the neighbor who is talking to us,
+			// we MUST take their new metric (even if worse / INF), and refresh LastUpdated.
+			if hdr.Src == currFwdEntry.NextHop {
+				ipStack.UpdateForwardingTable(ripEntry, hdr, "", ripEntryCost)
+				changedEntries = append(changedEntries, ripEntry)
+				continue
+			} 
+			// else, curr cost is better, ignore
+		}
+		// else if everything is the same
+		if ripEntryCost == currFwdEntryCost && hdr.Src == currFwdEntry.NextHop {
+			currFwdEntry.LastUpdated = time.Now()
+		}
+	}
+	/* if our costs changed, trigger a new RIPMessage to be sent */
+	if len(changedEntries) != 0 {
+		ipStack.SendTriggeredUpdate(changedEntries)
+	}
 }
 
 /* marshal rip message into bytes */
@@ -229,6 +327,10 @@ func DeserializeRipMessage (data []byte) (*RipMessage, error) {
     if err := binary.Read(buf, binary.BigEndian, &msg.Command); err != nil {
         return nil, err
     }
+	/* if we got a request, just be done */
+	if msg.Command == RIPRequest {
+		return &msg, nil
+	}
     if err := binary.Read(buf, binary.BigEndian, &numEntries); err != nil {
         return nil, err
     }

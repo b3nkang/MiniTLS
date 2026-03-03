@@ -25,12 +25,3 @@ type Neighbour struct {
 	IP  		netip.Addr 			// virtual IP (10.2.0.3)
 	UDPAddr		netip.AddrPort   	/* convert to net.UDPAddr when needed */
 }
-
-/* Just a simple data structure for an IP Packet (header and message) */
-type IPPacket struct { // TODO: type is very likely not necessary and can be converted into just IncomingPacketChan []byte 
-
-	SrcIfaceAddr *net.UDPAddr 	/* the interface this packet came in on. TODO: verify if this is even
-								needed, if not, change IPStack IncomingPacketChan to just []byte type */
-	Data []byte /* message field */
-}
-

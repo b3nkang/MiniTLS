@@ -28,26 +28,22 @@ func (iface *Interface) LinkLayerSend(udpDest *net.UDPAddr, bytes []byte) {
 
 
 /* what to run to constantly listen for new messages on your UDP port */
-func (iface *Interface) LinkLayerListen(ipStackChan chan IPPacket) error {
+func (iface *Interface) LinkLayerListen(ipStackChan chan []byte) error {
 	for {
 		buffer := make([]byte, MaxMessageSize)
 
 		/* Read messages from UDP port */
-		_, sourceAddr, err := iface.Conn.ReadFromUDP(buffer)
+		_, _, err := iface.Conn.ReadFromUDP(buffer)
 		if err != nil {
 			log.Panicln("Error reading from UDP socket ", err)
 		}
 		
-		// fmt.Printf("[LL] Received IP packet from %s. Forwarding to IP Stack...\n", sourceAddr.String())
+		// fmt.Printf("[LL] Received IP packet. Forwarding to IP Stack...\n")
 		if !iface.Up {
 			fmt.Printf("Dropping packet before receiving on down interface: %s", iface.Name)
 			continue
 		}
-		packet := IPPacket{
-			SrcIfaceAddr: sourceAddr,
-			Data: buffer,
-		}
 
-		ipStackChan <- packet
+		ipStackChan <- buffer
 	}
 }	

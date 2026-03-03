@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"ip-isabelle-and-ben/pkg/ipStack"
+	"ip-isabelle-and-ben/pkg/protocol"
 
 	"os"
 )
@@ -30,6 +31,9 @@ func main() {
 	ipStack.PrintForwardingTable()
 	fmt.Println("Interfaces")
 	ipStack.PrintInterfacesForDebugging()
+
+	/* register test protocol receive handler */
+	ipStack.RegisterRecvHandler(0, protocol.HandleTestMessage)
 
 	/* start handling IP messages */
 	go ipStack.RunIPLayer()

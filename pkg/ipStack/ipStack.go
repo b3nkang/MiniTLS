@@ -167,16 +167,6 @@ func (ipStack *IPStack) RunIPLayer() {
 		}
 
 		ipStack.IPForwarding(hdr, message, packet)
-		// switch hdr.Protocol {
-		// case ProtocolTypeTest:
-		// 	ipStack.IPForwarding(hdr, string(message), packet)
-		// /* okay because RIP will always be going just 1 hop */
-		// case ProtocolTypeRIP:
-		// 	ipStack.HandleRipMessage(hdr, message)
-		// default:
-		// 	fmt.Printf("[IP] Received packet with unrecognized protocol type. Dropping packet...\n> ")
-		// 	continue
-		// }
 	}
 }
 

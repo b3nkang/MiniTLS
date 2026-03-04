@@ -27,3 +27,9 @@ lp:
 
 dabc:
 	util/vnet_run d-abc
+
+refhost-loop:
+	util/vnet_run --host ./reference/arm64/vhost --router ./vrouter loop
+
+ourhost-loop:
+	util/vnet_run --host ./vhost --router ./reference/arm64/vrouter loop

@@ -25,7 +25,7 @@ func InitIPStackFromConfig(fileName string)(*IPStack, error) {
 	ipStack := &IPStack{
 		Interfaces:      make(map[string]*ll.Interface),
 		ForwardingTable: make(map[netip.Prefix]*FwdEntry, 0),
-		IncomingPacketChan: make(chan ll.IPPacket, 100),
+		IncomingPacketChan: make(chan []byte, 100),
 		recvHandlers: make(map[int]ReceiveHandler),
 	}
 
@@ -124,8 +124,6 @@ func (stack *IPStack) RegisterRecvHandler(protoNum int, handler ReceiveHandler) 
 }
 
 /* Highest-level send function on IP Stack, called by REPL. Internal sends use iface.LinkLayerSend(). */
-// TODO: low priority, but lots of the forwarding logic here is duplicated with RunIPLayer(). There are some nontrivial 
-// differences though, hence why the logic hasn't been abstracted into 1 func yet, but consider in future if messoooy
 func (ipStack *IPStack) SendIP(finalDest netip.Addr, message string) error {
 	// longest prefix match
 	entry, nextDest, found := ipStack.LongestPrefixMatch(finalDest)
@@ -160,13 +158,13 @@ func (ipStack *IPStack) SendIP(finalDest netip.Addr, message string) error {
 /* Run the IP Layer (handle and process messages) */
 func (ipStack *IPStack) RunIPLayer() {
 	// fmt.Println("Running IP Layer...")
-	for packet := range ipStack.IncomingPacketChan {
-		message, hdr, err := DeserializeAndValidatePacket(packet)
+	for msgBytes := range ipStack.IncomingPacketChan {
+		message, hdr, err := DeserializeAndValidatePacket(msgBytes)
 		if err != nil {
 			continue	// drop packet if parsing or validation fails
 		}
 
-		ipStack.IPForwarding(hdr, message, packet)
+		ipStack.IPForwarding(hdr, message)
 	}
 }
 
@@ -174,10 +172,9 @@ func (ipStack *IPStack) RunIPLayer() {
 // TODO: packet only being passed currently for light logging. remove once no longer needed
 /* IP Forwarding method: 
 */
-func (ipStack *IPStack) IPForwarding(hdr *ipv4header.IPv4Header, message []byte, packet ll.IPPacket) {	
+func (ipStack *IPStack) IPForwarding(hdr *ipv4header.IPv4Header, message []byte) {	
 	/* print out all the stuff TODO: get rid of or fix to meet format */
-	fmt.Printf("[IP] Received IP packet from %s\nHeader:  %v\nChecksum:  OK\nMessage:  %s\n",
-		packet.SrcIfaceAddr.String(), hdr, string(message))
+	fmt.Printf("[IP] Received IP packet...\nHeader:  %v\nChecksum:  OK\nMessage:  %s\n", hdr, string(message))
 
 	// ---- DESTINATION REACHED CASE ----
 	destFound := false
@@ -206,7 +203,6 @@ func (ipStack *IPStack) IPForwarding(hdr *ipv4header.IPv4Header, message []byte,
 	hdr.TTL -= 1
 	if hdr.TTL <= 0 {
 		fmt.Printf("[IP] pre-decrement TTL expired, dropping packet\n> ")
-		// TODO: no current way to ident IPStack addr, consider IPStack type update
 		return
 	}
 	// longest prefix match
@@ -279,8 +275,6 @@ func (ipStack *IPStack) LongestPrefixMatch(dest netip.Addr) (*FwdEntry, netip.Ad
     return ipStack.LongestPrefixMatch(longestMatchEntry.NextHop)
 }
 
-// TODO: potentially move these serializers/deserializers to Protocol? idk
-
 /* serializes an IP packet (IPV4 Header + bytes message) for the UDP layer to send */
 /* need to change string message to bytes to acccommodate RIP packets */
 func SerializePacket(source netip.Addr, dest netip.Addr, message []byte, protocol int, ttl int, isTtlNew bool) ([]byte) {
@@ -324,10 +318,10 @@ func SerializePacket(source netip.Addr, dest netip.Addr, message []byte, protoco
 }
 
 /* Takes in raw bytes, validates the checksum, checks TTL, and returns the deserialized message and header */
-func DeserializeAndValidatePacket(packet ll.IPPacket) ([]byte, *ipv4header.IPv4Header, error) {
+func DeserializeAndValidatePacket(msgBytes []byte) ([]byte, *ipv4header.IPv4Header, error) {
 	/* Marshal the received byte array into a UDP header
 	NOTE:  This does not validate the checksum or check any fields */
-	hdr, err := ipv4header.ParseHeader(packet.Data)
+	hdr, err := ipv4header.ParseHeader(msgBytes)
 
 	if err != nil {
 		/* drop packet if parsing doesn't work */
@@ -337,7 +331,7 @@ func DeserializeAndValidatePacket(packet ll.IPPacket) ([]byte, *ipv4header.IPv4H
 
 	/* extract and validate checksum */
 	headerSize := hdr.Len
-	headerBytes := packet.Data[:headerSize]
+	headerBytes := msgBytes[:headerSize]
 	checksumFromHeader := uint16(hdr.Checksum)
 	computedChecksum := utils.ValidateChecksum(headerBytes, checksumFromHeader)
 
@@ -345,18 +339,18 @@ func DeserializeAndValidatePacket(packet ll.IPPacket) ([]byte, *ipv4header.IPv4H
 	if computedChecksum == checksumFromHeader {
 		// fmt.Println("Checksum passed")
 	} else {
-		fmt.Printf("Checksum failed, dropping packet from %s\n", packet.SrcIfaceAddr.String())
+		fmt.Printf("Checksum failed, dropping packet...\n")
 		return make([]byte,0), nil, err
 	}
 
 	// check TTL
 	if hdr.TTL <= 0 {
-		fmt.Printf("TTL expired, dropping packet from %s\n", packet.SrcIfaceAddr.String())
+		fmt.Printf("TTL expired, dropping packet...\n")
 		return make([]byte,0), nil, err
 	}
 
 	/* Next, get the message, which starts after the header */
-	message := packet.Data[headerSize:]
+	message := msgBytes[headerSize:]
 
 	/* we probably don't want to return a string here--just want to return bytes and let 
 		handler convert */

@@ -19,7 +19,7 @@ type IPStack struct {
 	Interfaces			map[string]*ll.Interface  	/* “if0” : Interface() */
 	ForwardingTable 	map[netip.Prefix]*FwdEntry
 
-	IncomingPacketChan 	chan ll.IPPacket			/* for listener goroutine to tell main thread that we got a package */
+	IncomingPacketChan 	chan []byte			/* for listener goroutine to tell main thread that we got a package */
 	RipInfo 			RipInfo						/* for routers to store RipInfo */
 	mu 					sync.Mutex 					/* protect forwarding table */
 	recvHandlers 		map[int]ReceiveHandler		/* deal with receiving packets */

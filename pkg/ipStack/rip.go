@@ -61,11 +61,8 @@ func (ipStack *IPStack) TimeoutLoop() {
 	ticker := time.NewTicker(ipStack.RipInfo.RipTimeout / 6) // 2 seconds
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <- ticker.C:
-			ipStack.CheckForTimeouts()
-		}
+	for range ticker.C {
+		ipStack.CheckForTimeouts()
 	}
 }
 
@@ -111,11 +108,8 @@ func (stack *IPStack) UpdateLoop() {
 	ticker := time.NewTicker(stack.RipInfo.RipUpdateRate)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <- ticker.C:
-			stack.sendPeriodicUpdate()
-		}
+	for range ticker.C {
+		stack.sendPeriodicUpdate()
 	}
 }
 

@@ -164,16 +164,14 @@ func (ipStack *IPStack) RunIPLayer() {
 			continue	// drop packet if parsing or validation fails
 		}
 
-		ipStack.IPForwarding(hdr, message)
+		ipStack.ipForwarding(hdr, message)
 	}
 }
 
 // ********************** DELIVERY OR FORWARDING LOGIC **********************
-// TODO: packet only being passed currently for light logging. remove once no longer needed
 /* IP Forwarding method: 
 */
-func (ipStack *IPStack) IPForwarding(hdr *ipv4header.IPv4Header, message []byte) {	
-	/* print out all the stuff TODO: get rid of or fix to meet format */
+func (ipStack *IPStack) ipForwarding(hdr *ipv4header.IPv4Header, message []byte) {	
 	// fmt.Printf("[IP] Received IP packet...\nHeader:  %v\nChecksum:  OK\nMessage:  %s\n", hdr, string(message))
 
 	// ---- DESTINATION REACHED CASE ----

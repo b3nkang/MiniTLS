@@ -15,7 +15,6 @@ import (
 	- List of fwding table entries to iterate through
 */
 type IPStack struct {
-	// potentially consider adding a field "name" e.g. "H1" or "R1" for debugging purposes even if not strictly correct
 	Interfaces			map[string]*ll.Interface  	/* “if0” : Interface() */
 	ForwardingTable 	map[netip.Prefix]*FwdEntry
 
@@ -64,7 +63,6 @@ type ReceiveHandler func(hdr *ipv4header.IPv4Header, payload []byte)
 // Highest-level RIP type.
 // Effectively just composes the neighbours and some relevant fields
 type RipInfo struct {
-	/* would be far more helpful if we had an interface here than neighboring IP -> will have to get that later */
 	Neighbors 		[]RipNeighbour
 	RipTimeout		time.Duration
 	RipUpdateRate	time.Duration
@@ -91,19 +89,3 @@ type RipEntry struct {
 	Cost 		uint32			/* cost of this router to get to address */
 	Prefix 		netip.Prefix	/* contains both prefix and NETWORK address (specific VIP not needed) */
 }
-
-/*
-Will also need a data structure for RIP to accommodate these fields in Config:
-
-routing rip
-
-# Neighbor routers that should be sent RIP messages
-rip advertise-to 10.1.0.2
-
-# Timing parameters for RIP
-rip periodic-update-rate 5000 # in milliseconds
-rip route-timeout-threshold 12000 # in milliseconds
-
-
-*/
-

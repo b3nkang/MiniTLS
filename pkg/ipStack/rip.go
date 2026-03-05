@@ -88,7 +88,7 @@ func (ipStack *IPStack) CheckForTimeouts() {
 				// already timed out, skip processing
 				continue
 			}
-			fmt.Printf("FOUND TIMEOUT: %s\n", prefix.Addr().String())
+			// fmt.Printf("FOUND TIMEOUT: %s\n", prefix.Addr().String())
             timedOutRipEntries = append(timedOutRipEntries, RipEntry{ Cost: 16, Prefix: prefix })
 			entry.Cost = Infinity
 		}
@@ -171,7 +171,7 @@ func (stack *IPStack) sendPeriodicUpdate() {
 
 /* sends specific updates with changed information to RIP neighbors */
 func (stack *IPStack) SendTriggeredUpdate(entries []RipEntry) {
-	fmt.Println("Sending triggered update")
+	// fmt.Println("Sending triggered update")
 	message := RipMessage{
 		Command: RIPResponse,
 		NumEntries: uint16(len(entries)),
@@ -226,13 +226,13 @@ func (ipStack *IPStack) HandleRipMessage(hdr *ipv4header.IPv4Header, messageByte
 	// lock while we update table
 	ipStack.mu.Lock()
 	defer ipStack.mu.Unlock()
-	ipStack.ListRoutes() 
+	// ipStack.ListRoutes() 
 
 	/* for keeping track of changed entries */
 	changedEntries := make([]RipEntry, 0)
 
 	for _, ripEntry := range ripMsg.Entries {
-		fmt.Printf("entry: %s can reach %s with cost=%d\n", hdr.Src.String(), ripEntry.Prefix.String(), int(ripEntry.Cost))
+		// fmt.Printf("entry: %s can reach %s with cost=%d\n", hdr.Src.String(), ripEntry.Prefix.String(), int(ripEntry.Cost))
 		currFwdEntry, exists := ipStack.ForwardingTable[ripEntry.Prefix]
 		// update cost
 		var ripEntryCost uint32

@@ -10,11 +10,6 @@ const MaxMessageSize = 1400
 
 /* send an IP packet (IPV4 Header + bytes message) via UDP Link Layer */
 func (iface *Interface) LinkLayerSend(udpDest *net.UDPAddr, bytes []byte) {
-	// if !iface.Up{
-	// 	fmt.Printf("Interface: %s down\n", iface.Name)
-	// } else{
-	// 	fmt.Printf("Interface: %s up\n", iface.Name)
-	// }
 	if !iface.Up {
 		fmt.Printf("Dropping packet before sending on down interface: %s", iface.Name)
 		return
@@ -23,7 +18,6 @@ func (iface *Interface) LinkLayerSend(udpDest *net.UDPAddr, bytes []byte) {
 	if err != nil {
 		log.Panicln("Error writing to socket: ", err)
 	}
-	// fmt.Printf("Sent %d bytes\n", bytesWritten)
 }
 
 

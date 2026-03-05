@@ -131,13 +131,13 @@ func (ipStack *IPStack) SendIP(finalDest netip.Addr, message string) error {
 		fmt.Printf("[IP] No match on LongestPrefixMatch in FwdTable, dropping packet\n")
 		return errors.New("No match on LongestPrefixMatch in FwdTable")
 	}
-	fmt.Printf("[IP] Longest prefix match found on %s\n", entry.InterfaceName)
+	// fmt.Printf("[IP] Longest prefix match found on %s\n", entry.InterfaceName)
 
 	// check how to forward
 	switch entry.Type {
 	case SourceTypeLocal:
 		// if direct, seek through neighbours and send 
-		fmt.Printf("[IP] Match is directly connected. Forwarding to destination %s\n", nextDest.String())
+	//	fmt.Printf("[IP] Match is directly connected. Forwarding to destination %s\n", nextDest.String())
 		iface := ipStack.Interfaces[entry.InterfaceName]
 		nextDestAsNeighbour := iface.Neighbours[nextDest]
 		if nextDestAsNeighbour == nil {
@@ -174,14 +174,14 @@ func (ipStack *IPStack) RunIPLayer() {
 */
 func (ipStack *IPStack) IPForwarding(hdr *ipv4header.IPv4Header, message []byte) {	
 	/* print out all the stuff TODO: get rid of or fix to meet format */
-	fmt.Printf("[IP] Received IP packet...\nHeader:  %v\nChecksum:  OK\nMessage:  %s\n", hdr, string(message))
+	// fmt.Printf("[IP] Received IP packet...\nHeader:  %v\nChecksum:  OK\nMessage:  %s\n", hdr, string(message))
 
 	// ---- DESTINATION REACHED CASE ----
 	destFound := false
 	finalDest := hdr.Dst
 	for _, iface := range ipStack.Interfaces {
 		if iface.IP == finalDest {
-			fmt.Printf("[IP] packet destination reached on interface %s\n", iface.Name)
+			// fmt.Printf("[IP] packet destination reached on interface %s\n", iface.Name)
 			destFound = true
 			/* call correct receive handler */
 			receiveHandler, exists := ipStack.recvHandlers[hdr.Protocol]
@@ -194,7 +194,7 @@ func (ipStack *IPStack) IPForwarding(hdr *ipv4header.IPv4Header, message []byte)
 		}
 	}
 	if destFound {
-		fmt.Printf("> ") // print for REPL
+		// fmt.Printf("> ") // print for REPL
 		return // we're done, wait for next paket
 	}
 
@@ -211,7 +211,6 @@ func (ipStack *IPStack) IPForwarding(hdr *ipv4header.IPv4Header, message []byte)
 		fmt.Printf("[IP] No match on LongestPrefixMatch in FwdTable, dropping packet\n> ")
 		return
 	}
-	fmt.Printf("[IP] Longest prefix match found on %s\n", entry.InterfaceName)
 
 	// if cost is infinity, the route is offline, so drop
 	if entry.Cost >= Infinity {
@@ -223,7 +222,7 @@ func (ipStack *IPStack) IPForwarding(hdr *ipv4header.IPv4Header, message []byte)
 	switch entry.Type {
 		case SourceTypeLocal:
 			// if direct, seek through neighbours and send 
-			fmt.Printf("[IP] Match prefix is directly connected. Forwarding to prefix %s for dest %s\n", entry.Prefix.String(), hdr.Dst.String())
+			// fmt.Printf("[IP] Match prefix is directly connected. Forwarding to prefix %s for dest %s\n", entry.Prefix.String(), hdr.Dst.String())
 			iface := ipStack.Interfaces[entry.InterfaceName]
 
 			/* if interface is down, drop packet */
@@ -234,7 +233,7 @@ func (ipStack *IPStack) IPForwarding(hdr *ipv4header.IPv4Header, message []byte)
 
 			nextDestAsNeighbour := iface.Neighbours[nextDest]
 			if nextDestAsNeighbour == nil {
-				fmt.Printf("[IP] Entry in FwdTable found, LOCAL case, but neighbor <%s> doesn't exist. Dropping packet...\n> ", nextDest.String())
+				// fmt.Printf("[IP] Entry in FwdTable found, LOCAL case, but neighbor <%s> doesn't exist. Dropping packet...\n> ", nextDest.String())
 				return
 			}
 			/* get neighbor's UDP address */

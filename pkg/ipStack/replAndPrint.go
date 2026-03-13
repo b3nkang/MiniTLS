@@ -69,9 +69,17 @@ func (stack *IPStack) HandleCommand(line string) {
 		stack.ListRoutes()
 	/* disable interface down <ifname> */
 	case "down":
+		if len(parts) < 2 {
+			fmt.Println("Usage: down <if_num>")
+			return
+		}
 		stack.IFDown(parts[1])
 	/* enable interface up <ifname> */
 	case "up":
+		if len(parts) < 2 {
+			fmt.Println("Usage: up <if_num>")
+			return
+		}
 		stack.IFUp(parts[1])
 	/* not actual requirements */
 	case "me":

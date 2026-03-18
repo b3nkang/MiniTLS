@@ -44,6 +44,7 @@ func main() {
 	/* register handler to deal with TCP messages */
 	ipStack.RegisterRecvHandler(6, tcpStack.HandleTCP)
 
+	go tcpStack.HandleREPLCommands()
 	/* start REPL -- runs forever so needs to be last*/
 	ipStack.StartREPL()
 }

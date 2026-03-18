@@ -3,12 +3,14 @@ package tcpstack
 /*
 
 NEXT STEPS:
-- send SYN method
-	- and VConnect
+
 - finish 3-way handshake:
-	- receive SYN-ACK
+	- handle SYN-ACK
 	- send ACK
 	- receive ACK and send Conn to listener chan so that Accept can return
+	- REPL 'C' Command
+		- I tested "A" and it seems to work?
+		- I had to add a channel to the IpStack struct to pass TCP commands to the TCP stack for handling
 
 */
 
@@ -48,15 +50,36 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 	case LISTEN:
 		/* we matched the listen socket--so we should be getting an initial SYN */
 		/* should pass in IP Source as OUR DEST and IP Dest as OUR SOURCE since this is FROM REMOTE */
+		fmt.Println("[TCP] Packet sent to listen socket--starting 3-way handshake")
 		tcp.handleSyn(socketEntry.listenSocket, tcpHdr, tcpData, hdr.Dst, hdr.Src)
 		return
 	case SYN_RECEIVED:
-		/* if we are in this state, we should have gotten SYN-ACK */
 		//tcp.handleSynAck(socketEntry.normalSocket, tcpHdr, tcpData)
+		fmt.Println("[TCP] handler received packet in state SYN_RECEIVED")
 	default:
 		fmt.Println("No known state that matches: %d", socketEntry.state)
 	}
 
+}
+
+/* send initial SYN */
+func (tcp *TCPStack) sendSyn(tableEntry *SocketTableEntry) error {
+	fmt.Println("[TCP] entering send SYN function")
+	/* make TCP header */
+	tcpHdr := &header.TCPFields{
+		SrcPort:       tableEntry.localPort,
+		DstPort:       tableEntry.destPort,
+		SeqNum:        tableEntry.seqNum,
+		DataOffset:    20, 			/* TODO: I have no idea what this is */
+		Flags:         header.TCPFlagSyn,
+		WindowSize:    65535, 		/* TODO: figure out what this actually should be */
+		Checksum:      0,
+		UrgentPointer: 0,
+	}
+
+	/* send using sendTCP */
+	tcp.sendTCP(tcpHdr, tableEntry.localIP, tableEntry.destIP, make([]byte, 0))
+	return nil
 }
 
 /* What we do when we get a match on a listen socket
@@ -89,7 +112,7 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 	conn := &VTCPConn{
 		packetChan: make(chan []byte),
 	}
-
+	fmt.Println("[TCP] normal socket created from listen socket--adding to socket table")
 	/* make socket table entry and add in correct state */
 	entry := &SocketTableEntry{
 		localPort: tcpHeader.DstPort,
@@ -108,6 +131,7 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 	/* TODO: send SYN-ACK */
 	tcp.sendSynAck(entry, tcpHeader.SeqNum)
 }
+
 
 /* send SYN-ACK (second part of 3-way handshake) */
 func (tcp *TCPStack) sendSynAck(tableEntry *SocketTableEntry, synSeq uint32) error {
@@ -129,6 +153,9 @@ func (tcp *TCPStack) sendSynAck(tableEntry *SocketTableEntry, synSeq uint32) err
 	return nil
 
 }
+
+/* handle incoming SYN-ACK and send ACK */
+
 
 /* match an incoming packet to a table entry */
 func (table *SocketTable) tableMatch(srcPort uint16, srcIP netip.Addr, destPort uint16, destIP netip.Addr) (*SocketTableEntry, error) {
@@ -159,7 +186,6 @@ func (table *SocketTable) tableMatch(srcPort uint16, srcIP netip.Addr, destPort 
 
 	/* otherwise, we didn't find a match */
 	return nil, errors.New("no match found in socket table")
-
 }
 
 /* 
@@ -184,6 +210,7 @@ func (tcp *TCPStack) sendTCP(hdr *header.TCPFields, srcIP netip.Addr, destIP net
 
 	/* call SendIP */
 	tcp.ipStack.SendIP(destIP, ipPacketPayload, 6)
+	fmt.Printf("[TCP] SendTCP sent message from SRC: %s to DST: %s\n", srcIP.String(), destIP.String())
 
 	/* TODO: return bytes written/sent? */
 }

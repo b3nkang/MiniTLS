@@ -86,6 +86,9 @@ func (stack *IPStack) HandleCommand(line string) {
 		stack.PrintInterfacesForDebugging()
 	case "q":
 		os.Exit(0)
+	/* pass TCP commands to the TCP REPL Handler */
+	case "a", "c":
+		stack.TCPReplChan <- line	
 	default:
 		fmt.Println("Unknown command")
 	}

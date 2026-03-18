@@ -3,10 +3,11 @@ package protocol
 /* pasted from lecture demo code */
 
 import (
-	"crypto/rand"
+	cryptoRand "crypto/rand"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	mathRand "math/rand"
 	"net/netip"
 	"strings"
 
@@ -24,8 +25,13 @@ const (
 /* for generating random initial sequence nums */
 func GenerateNewSeq() uint32 {
 	b := make([]byte, 4)
-	rand.Read(b)
+	cryptoRand.Read(b)
 	return binary.BigEndian.Uint32(b)
+}
+
+
+func RandomEphemeralPort() uint16 {
+	return uint16(49152 + mathRand.Intn(65535-49152+1))
 }
 
 /* parses and validates TCP message from IP

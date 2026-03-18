@@ -14,6 +14,7 @@ const (
     SYN_SENT
     SYN_RECEIVED
     ESTABLISHED
+	ERROR /* just made this for 3-way handshake */
 )
 
 /* info about 1 socket in table */
@@ -32,6 +33,10 @@ type SocketTableEntry struct {
 	/* store a socket (either normal or listener) */
 	normalSocket	*VTCPConn
 	listenSocket	*VTCPListener
+
+	/* for telling initial sender that connection has been established
+		after 3-way handshake */
+	establishedChan chan int
 }
 
 /* 1 per host: stores all info about open sockets 

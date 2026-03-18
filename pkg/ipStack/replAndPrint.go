@@ -54,7 +54,7 @@ func (stack *IPStack) HandleCommand(line string) {
 			return
 		}
 		/* CALL IP LAYER SEND! */
-		err = stack.SendIP(destIP, msg)
+		err = stack.SendIP(destIP, []byte(msg), ProtocolTypeTest)
 		if err != nil {
 			fmt.Println("Send error:", err)
 		}
@@ -86,6 +86,9 @@ func (stack *IPStack) HandleCommand(line string) {
 		stack.PrintInterfacesForDebugging()
 	case "q":
 		os.Exit(0)
+	/* pass TCP commands to the TCP REPL Handler */
+	case "a", "c":
+		stack.TCPReplChan <- line	
 	default:
 		fmt.Println("Unknown command")
 	}

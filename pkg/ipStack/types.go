@@ -22,6 +22,8 @@ type IPStack struct {
 	RipInfo 			RipInfo						/* for routers to store RipInfo */
 	mu 					sync.Mutex 					/* protect forwarding table */
 	recvHandlers 		map[int]ReceiveHandler		/* deal with receiving packets */
+
+	TCPReplChan			chan string			/* for passing REPL commands to TCP stack */
 }
 
 /*

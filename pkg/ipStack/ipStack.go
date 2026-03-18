@@ -27,6 +27,7 @@ func InitIPStackFromConfig(fileName string)(*IPStack, error) {
 		ForwardingTable: make(map[netip.Prefix]*FwdEntry, 0),
 		IncomingPacketChan: make(chan []byte, 100),
 		recvHandlers: make(map[int]ReceiveHandler),
+		TCPReplChan: make(chan string, 5),
 	}
 
 	/* initialize structs within this IPStack */
@@ -124,7 +125,7 @@ func (stack *IPStack) RegisterRecvHandler(protoNum int, handler ReceiveHandler) 
 }
 
 /* Highest-level send function on IP Stack, called by REPL. Internal sends use iface.LinkLayerSend(). */
-func (ipStack *IPStack) SendIP(finalDest netip.Addr, message string) error {
+func (ipStack *IPStack) SendIP(finalDest netip.Addr, message []byte, protoNum int) error {
 	// longest prefix match
 	entry, nextDest, found := ipStack.LongestPrefixMatch(finalDest)
 	if !found {
@@ -146,7 +147,7 @@ func (ipStack *IPStack) SendIP(finalDest netip.Addr, message string) error {
 		} else {
 			nextDestAsUDPAddr := net.UDPAddrFromAddrPort(nextDestAsNeighbour.UDPAddr)
 			// brand new send, so specify new TTL
-			bytesToSend := SerializePacket(iface.IP, finalDest, []byte(message), ProtocolTypeTest, 0, true)
+			bytesToSend := SerializePacket(iface.IP, finalDest, []byte(message), protoNum, 0, true)
 			iface.LinkLayerSend(nextDestAsUDPAddr, bytesToSend)
 		}
 	default:
@@ -236,7 +237,7 @@ func (ipStack *IPStack) ipForwarding(hdr *ipv4header.IPv4Header, message []byte)
 			}
 			/* get neighbor's UDP address */
 			nextDestAsUDPAddr := net.UDPAddrFromAddrPort(nextDestAsNeighbour.UDPAddr)
-			bytesToSend := SerializePacket(iface.IP, finalDest, message, ProtocolTypeTest, hdr.TTL, false)
+			bytesToSend := SerializePacket(hdr.Src, finalDest, message, ProtocolTypeTest, hdr.TTL, false)
 			iface.LinkLayerSend(nextDestAsUDPAddr, bytesToSend)
 		/* we are a router and we learned about this route through RIP */
 		case SourceTypeRIP:

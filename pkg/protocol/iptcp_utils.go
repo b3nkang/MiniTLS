@@ -1,15 +1,17 @@
 package protocol
 
-
 /* pasted from lecture demo code */
 
 import (
+	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net/netip"
 	"strings"
 
-	"github.com/google/netstack/tcpip/header"
+	ipv4header "github.com/brown-csci1680/iptcp-headers"
+	header "github.com/google/netstack/tcpip/header"
 )
 
 const (
@@ -18,6 +20,51 @@ const (
 	IpProtoTcp           = header.TCPProtocolNumber
 	MaxVirtualPacketSize = 1400
 )
+
+/* for generating random initial sequence nums */
+func GenerateNewSeq() uint32 {
+	b := make([]byte, 4)
+	rand.Read(b)
+	return binary.BigEndian.Uint32(b)
+}
+
+/* parses and validates TCP message from IP
+	returns TCP header, TCP body, and error (if checksum fails) */
+func ParseAndValidateTCP(hdr *ipv4header.IPv4Header, message []byte) (header.TCPFields, []byte, error) {
+
+	// **** IMPORTANT ****:  The total length of the data is included
+	// in the **IP header**.  This is very important because
+	// ReadFromUDP reads into a buffer of size 1400, but the actual
+	// message may be smaller!
+	// Therefore, to get the correct-sized payload, we need
+	// to slice it out of buffer
+	ipHeaderSize := hdr.Len
+	tcpHeaderAndData := message[ipHeaderSize:hdr.TotalLen]
+
+	// Parse the TCP header into a struct
+	tcpHdr := ParseTCPHeader(tcpHeaderAndData)
+
+	// Get the payload
+	tcpPayload := tcpHeaderAndData[tcpHdr.DataOffset:]
+
+	// Now that we have all the pieces, we can verify the TCP checksum
+	// In general, the checksum function expects the checksum field to be
+	// set to 0, which allows us to verify it by checking against the
+	// value sent in the header.
+	// An alternative is to *not* clear this value and then compare
+	// tcpComputedChecksum == 0 (for details, see EdStem #208)
+	tcpChecksumFromHeader := tcpHdr.Checksum // Save original
+	tcpHdr.Checksum = 0
+	tcpComputedChecksum := ComputeTCPChecksum(&tcpHdr, hdr.Src, hdr.Dst, tcpPayload)
+
+	/* computer TCP checksum */
+	if tcpComputedChecksum != tcpChecksumFromHeader {
+		return tcpHdr, tcpPayload, errors.New("checksum failed")
+	}
+
+	return tcpHdr, tcpPayload, nil
+}
+
 
 // Build a TCPFields struct from the TCP byte array
 //
@@ -143,3 +190,4 @@ func TCPFieldsToString(hdr *header.TCPFields) string {
 	return fmt.Sprintf("{SrcPort:%d DstPort:%d, SeqNum:%d AckNum:%d DataOffset:%d Flags:%s WindowSize:%d Checksum:%x UrgentPointer:%d}",
 		hdr.SrcPort, hdr.DstPort, hdr.SeqNum, hdr.AckNum, hdr.DataOffset, TCPFlagsAsString(hdr.Flags), hdr.WindowSize, hdr.Checksum, hdr.UrgentPointer)
 }
+

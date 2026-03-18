@@ -10,6 +10,7 @@ const MaxMessageSize = 1400
 /* send an IP packet (IPV4 Header + bytes message) via UDP Link Layer */
 func (iface *Interface) LinkLayerSend(udpDest *net.UDPAddr, bytes []byte) {
 	if !iface.Up {
+		// Dropping packet before sending on down interface 
 		return
 	}
 	_, err := iface.Conn.WriteToUDP(bytes, udpDest)
@@ -32,6 +33,7 @@ func (iface *Interface) LinkLayerListen(ipStackChan chan []byte) error {
 		
 		// fmt.Printf("[LL] Received IP packet. Forwarding to IP Stack...\n")
 		if !iface.Up {
+			// drop packet because if is down
 			continue
 		}
 

@@ -22,7 +22,8 @@ const (
 	MaxVirtualPacketSize = 1400
 )
 
-/* for generating random initial sequence nums */
+/* for generating random initial sequence nums 
+	tbh idk if we need this, maybe ask in meeting? */
 func GenerateNewSeq() uint32 {
 	b := make([]byte, 4)
 	cryptoRand.Read(b)
@@ -31,7 +32,8 @@ func GenerateNewSeq() uint32 {
 
 
 func RandomEphemeralPort() uint16 {
-	return uint16(49152 + mathRand.Intn(65535-49152+1))
+	port := uint16(49152 + mathRand.Intn(65535-49152+1))
+	return port
 }
 
 /* parses and validates TCP message from IP

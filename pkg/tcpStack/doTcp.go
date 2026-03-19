@@ -9,8 +9,9 @@ NEXT STEPS:
 	- send ACK =================================================================> IMPLEMENTED (untested)
 	- receive ACK and send Conn to listener chan so that Accept can return =====> IMPLEMENTED (untested)
 	- REPL 'C' Command =========================================================> IMPLEMENTED (untested)
-		- I tested "A" and it seems to work? ===================================> I did not try to run it but looks ok
-		- I had to add a channel to the IpStack struct to pass TCP commands to the TCP stack for handling ===> yes i like
+
+QUESTIONS FOR MILESTONE 1 MEETING:
+	- do we need to have random sequence nums or can we just start from 1?
 
 */
 
@@ -29,6 +30,8 @@ not sure if we need the IP header here but will leave for now
 */
 func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 	table := tcp.socketTable
+
+	fmt.Println("[TCP] HandleTCP called, parsing and validating TCP message")
 
 	/* 1. parse TCP header and extract message body */
 	tcpHdr, _, err := utils.ParseAndValidateTCP(hdr, payload) // TODO: re-add tcpData when we need. Its "_" right now because no use, so to turn off compiler warning
@@ -82,6 +85,10 @@ func (tcp *TCPStack) sendSyn(tableEntry *SocketTableEntry) error {
 
 	/* send using sendTCP */
 	tcp.sendTCP(tcpHdr, tableEntry.localIP, tableEntry.destIP, make([]byte, 0))
+
+	/* print for now */
+	fmt.Println("[TCP] printing socket table for now")
+	tcp.socketTable.listSockets()
 	return nil
 }
 

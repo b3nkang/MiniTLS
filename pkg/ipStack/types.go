@@ -39,6 +39,7 @@ const (
 
 	ProtocolTypeTest = 0
 	ProtocolTypeRIP = 200
+	ProtocolTypeTCP = 6
 
 	TTLNew = 32
 )

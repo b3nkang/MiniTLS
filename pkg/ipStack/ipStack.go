@@ -147,6 +147,7 @@ func (ipStack *IPStack) SendIP(finalDest netip.Addr, message []byte, protoNum in
 		} else {
 			nextDestAsUDPAddr := net.UDPAddrFromAddrPort(nextDestAsNeighbour.UDPAddr)
 			// brand new send, so specify new TTL
+			fmt.Printf("[IP] in SendIP, protoNum being passed to SerializePacket: %d\n", protoNum)
 			bytesToSend := SerializePacket(iface.IP, finalDest, []byte(message), protoNum, 0, true)
 			iface.LinkLayerSend(nextDestAsUDPAddr, bytesToSend)
 		}
@@ -182,6 +183,7 @@ func (ipStack *IPStack) ipForwarding(hdr *ipv4header.IPv4Header, message []byte)
 		if iface.IP == finalDest {
 			// fmt.Printf("[IP] packet destination reached on interface %s\n", iface.Name)
 			destFound = true
+			fmt.Printf("[IP] destination reached--packet protocol: %d\n", hdr.Protocol)
 			/* call correct receive handler */
 			receiveHandler, exists := ipStack.recvHandlers[hdr.Protocol]
 			if !exists {
@@ -237,7 +239,7 @@ func (ipStack *IPStack) ipForwarding(hdr *ipv4header.IPv4Header, message []byte)
 			}
 			/* get neighbor's UDP address */
 			nextDestAsUDPAddr := net.UDPAddrFromAddrPort(nextDestAsNeighbour.UDPAddr)
-			bytesToSend := SerializePacket(hdr.Src, finalDest, message, ProtocolTypeTest, hdr.TTL, false)
+			bytesToSend := SerializePacket(hdr.Src, finalDest, message, hdr.Protocol, hdr.TTL, false)
 			iface.LinkLayerSend(nextDestAsUDPAddr, bytesToSend)
 		/* we are a router and we learned about this route through RIP */
 		case SourceTypeRIP:
@@ -292,6 +294,7 @@ func SerializePacket(source netip.Addr, dest netip.Addr, message []byte, protoco
 		Dst:      dest,
 		Options:  []byte{},
 	}
+	fmt.Printf("[IP] in SerializePacket, protoNum stored in header: %d\n", hdr.Protocol)
 	if !isTtlNew {
 		hdr.TTL = ttl
 	}

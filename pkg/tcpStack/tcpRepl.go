@@ -3,8 +3,11 @@ package tcpstack
 import (
 	"fmt"
 	"net/netip"
+	"os"
 	"strconv"
 	"strings"
+
+	"github.com/olekukonko/tablewriter"
 )
 
 /* deal with REPL commands from IP REPL */
@@ -55,6 +58,8 @@ func (tcp *TCPStack) HandleREPLCommands() {
 			}
 			port := uint16(portInt)
 			go tcp.cCommand(addr, port) // so REPL dont block
+		case "ls":
+			tcp.socketTable.listSockets()
 		default:
 			fmt.Println("Unknown TCP command")
 		}
@@ -88,4 +93,66 @@ func (tcp *TCPStack) cCommand(addr netip.Addr, port uint16) {
         return
     }
     fmt.Println("Connected!", conn)
+}
+
+/* list socket table */
+func (table *SocketTable) listSockets() {
+	table.mu.Lock()
+	defer table.mu.Unlock()
+
+	tw := tablewriter.NewWriter(os.Stdout)
+
+	tw.Header([]string{
+		"SID",
+		"LAddr",
+		"LPort",
+		"RAddr",
+		"RPort",
+		"Status",
+	})
+
+	for _, e := range table.socketMap {
+
+		laddr := addrToString(e.localIP)
+		raddr := addrToString(e.destIP)
+
+		lport := fmt.Sprint(e.localPort)
+		rport := fmt.Sprint(e.destPort)
+
+		stateStr := stateToString(e.state)
+
+		tw.Append([]string{
+			fmt.Sprint(e.socketID),
+			laddr,
+			lport,
+			raddr,
+			rport,
+			stateStr,
+		})
+	}
+	tw.Render()
+}
+
+/* for printing Socket Table */
+func stateToString(s int) string {
+	switch s {
+	case LISTEN:
+		return "LISTEN"
+	case SYN_SENT:
+		return "SYN-SENT"
+	case SYN_RECEIVED:
+		return "SYN-RECVD"
+	case ESTABLISHED:
+		return "ESTABLISHED"
+	default:
+		return "?"
+	}
+}
+
+/* for printing Socket Table: want '0.0.0.0' if IP is not set */
+func addrToString(a netip.Addr) string {
+	if !a.IsValid() {
+		return "0.0.0.0"
+	}
+	return a.String()
 }

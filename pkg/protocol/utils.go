@@ -32,7 +32,7 @@ func ComputeChecksum(b []byte) uint16 {
 /* test message handler...idk if there's a better place to put it but nick put it in utils so...*/
 func HandleTestMessage(hdr *ipv4header.IPv4Header, payload []byte) {
 	message := string(payload)
-	fmt.Printf("Received message from %s: %s\n", hdr.Src, message)
+	fmt.Printf("[HandleTestMessage] Received message from %s: %s\n", hdr.Src, message)
 }
 
 

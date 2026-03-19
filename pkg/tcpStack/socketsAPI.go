@@ -45,6 +45,7 @@ func (tcp *TCPStack) VListen(port uint16) (*VTCPListener, error) {
 	tcp.socketTable.socketMap[tableEntry.socketID] = tableEntry
 	fmt.Printf("Made a new entry and listener socket in host's socket table with: \n Port: %d\nState: %d\nSocketID: %d\n",
 				tableEntry.localPort, tableEntry.state, tableEntry.socketID)
+	tcp.socketTable.listSockets()
 	return listener, nil
 }
 
@@ -67,11 +68,12 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
 		we get one (should only take 1 try) */
 	var srcPort uint16
 	for {
-		srcPort := utils.RandomEphemeralPort()
+		srcPort = utils.RandomEphemeralPort()
 		if table.portIsUnique(srcPort) {
 			break
 		}
 	}
+	fmt.Printf("[TCP] Port generated in VConnect: %d\n", srcPort)
 	/* get this conn's local IP (just going to use if0?) */
 	localInterface := tcp.ipStack.Interfaces["if0"]
 	localIP := localInterface.IP

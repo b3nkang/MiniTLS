@@ -4,14 +4,16 @@ package tcpstack
 
 NEXT STEPS:
 
-- finish 3-way handshake:
-	- handle SYN-ACK ===========================================================> IMPLEMENTED (untested)
-	- send ACK =================================================================> IMPLEMENTED (untested)
-	- receive ACK and send Conn to listener chan so that Accept can return =====> IMPLEMENTED (untested)
-	- REPL 'C' Command =========================================================> IMPLEMENTED (untested)
+- Actually check ACKs?
+- send ERROR state to sender socket's establishedChan if some error
+	occurs during 3-way handshake so it won't hang forever? (not sure if we need to)
 
 QUESTIONS FOR MILESTONE 1 MEETING:
 	- do we need to have random sequence nums or can we just start from 1?
+	- do we need to verify Acks in 3-way handshake? As in that they are the right numbers?
+	- can we keep a reference to the OG listen socket in our entry for normal sockets? so that we can
+		tell it to return from Accept()?
+	- should the aCommand() function loop forever? if so, how do we read?
 
 */
 
@@ -45,8 +47,10 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 	if err != nil {
 		/* didn't find match */
 		fmt.Println("[TCP] No normal or listener socket open that matches the following:\n")
-		fmt.Printf("Src Port: %s\nSrc IP; %s\n Dest Port: %s\n Dest IP: %s\n", string(tcpHdr.SrcPort), hdr.Src.String(), string(tcpHdr.DstPort), hdr.Dst.String())
+		fmt.Printf("Src Port: %s\nSrc IP: %s\n Dest Port: %s\n Dest IP: %s\n", string(tcpHdr.SrcPort), hdr.Src.String(), string(tcpHdr.DstPort), hdr.Dst.String())
 	} 
+	
+	PrintSocketTableEntry(socketEntry)
 
 	/* 3. act differently based on state of that conn in our table */
 	switch socketEntry.state {
@@ -57,10 +61,10 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 		tcp.handleSyn(socketEntry.listenSocket, tcpHdr, hdr.Dst, hdr.Src)
 		return
 	case SYN_RECEIVED:
-		// tcp.handleSynAck(socketEntry.normalSocket, tcpHdr, tcpData)
-		fmt.Println("[TCP] handler received packet in state SYN_RECEIVED")
+		fmt.Println("[TCP] handler received packet in state SYN-RECEIVED -> handling ACK")
+		tcp.handleAck(socketEntry, tcpHdr)
 	case SYN_SENT:
-		fmt.Println("[TCP] handler received packet in state SYN_RECEIVED")
+		fmt.Println("[TCP] handler received packet in state SYN-SENT -> handling SYN-ACK")
 		tcp.handleSynAck(socketEntry, tcpHdr)
 	default:
 		fmt.Println("No known state that matches: %d", socketEntry.state)
@@ -131,6 +135,7 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 		destIP: destIP,
 		state: SYN_RECEIVED,
 		normalSocket: conn,
+		listenSocket: listener,
 		socketID: table.nextID,
 		seqNum: utils.GenerateNewSeq(), /* generate random sequence number here for starting */
 	}
@@ -215,7 +220,13 @@ func (tcp *TCPStack) handleAck(tableEntry *SocketTableEntry, tcpHeader header.TC
 
 	// return state
 	tableEntry.state = ESTABLISHED
+	/* BUG FIX: need to actually find the listen socket from which this entry came from 
+		or just fill it in when we make the conn -- filling in for now-- ask Kazuya */
 	tableEntry.listenSocket.connChan <- tableEntry.normalSocket // unblock vconnnect
+
+	fmt.Println("[TCP] Switching state to ESTABLISHED, unblocking Accept.")
+	table.listSockets()
+	fmt.Println(">")
 	return nil
 }
 

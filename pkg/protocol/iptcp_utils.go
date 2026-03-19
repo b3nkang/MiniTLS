@@ -39,21 +39,9 @@ func RandomEphemeralPort() uint16 {
 /* parses and validates TCP message from IP
 	returns TCP header, TCP body, and error (if checksum fails) */
 func ParseAndValidateTCP(hdr *ipv4header.IPv4Header, message []byte) (header.TCPFields, []byte, error) {
-
-	// **** IMPORTANT ****:  The total length of the data is included
-	// in the **IP header**.  This is very important because
-	// ReadFromUDP reads into a buffer of size 1400, but the actual
-	// message may be smaller!
-	// Therefore, to get the correct-sized payload, we need
-	// to slice it out of buffer
-	ipHeaderSize := hdr.Len
-	tcpHeaderAndData := message[ipHeaderSize:hdr.TotalLen]
-
-	// Parse the TCP header into a struct
-	tcpHdr := ParseTCPHeader(tcpHeaderAndData)
-
-	// Get the payload
-	tcpPayload := tcpHeaderAndData[tcpHdr.DataOffset:]
+	/* we don't need to trim the message as reference code does because we already are */
+	tcpHdr := ParseTCPHeader(message)
+	tcpPayload := message[tcpHdr.DataOffset:]
 
 	// Now that we have all the pieces, we can verify the TCP checksum
 	// In general, the checksum function expects the checksum field to be

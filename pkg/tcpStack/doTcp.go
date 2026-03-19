@@ -5,12 +5,12 @@ package tcpstack
 NEXT STEPS:
 
 - finish 3-way handshake:
-	- handle SYN-ACK
-	- send ACK
-	- receive ACK and send Conn to listener chan so that Accept can return
-	- REPL 'C' Command
-		- I tested "A" and it seems to work?
-		- I had to add a channel to the IpStack struct to pass TCP commands to the TCP stack for handling
+	- handle SYN-ACK ===========================================================> IMPLEMENTED (untested)
+	- send ACK =================================================================> IMPLEMENTED (untested)
+	- receive ACK and send Conn to listener chan so that Accept can return =====> IMPLEMENTED (untested)
+	- REPL 'C' Command =========================================================> IMPLEMENTED (untested)
+		- I tested "A" and it seems to work? ===================================> I did not try to run it but looks ok
+		- I had to add a channel to the IpStack struct to pass TCP commands to the TCP stack for handling ===> yes i like
 
 */
 
@@ -31,7 +31,7 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 	table := tcp.socketTable
 
 	/* 1. parse TCP header and extract message body */
-	tcpHdr, tcpData, err := utils.ParseAndValidateTCP(hdr, payload)
+	tcpHdr, _, err := utils.ParseAndValidateTCP(hdr, payload) // TODO: re-add tcpData when we need. Its "_" right now because no use, so to turn off compiler warning
 	if err != nil {
 		/* checksum failed */
 		fmt.Println("Error: %s\n", err.Error())
@@ -51,11 +51,14 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 		/* we matched the listen socket--so we should be getting an initial SYN */
 		/* should pass in IP Source as OUR DEST and IP Dest as OUR SOURCE since this is FROM REMOTE */
 		fmt.Println("[TCP] Packet sent to listen socket--starting 3-way handshake")
-		tcp.handleSyn(socketEntry.listenSocket, tcpHdr, tcpData, hdr.Dst, hdr.Src)
+		tcp.handleSyn(socketEntry.listenSocket, tcpHdr, hdr.Dst, hdr.Src)
 		return
 	case SYN_RECEIVED:
-		//tcp.handleSynAck(socketEntry.normalSocket, tcpHdr, tcpData)
+		// tcp.handleSynAck(socketEntry.normalSocket, tcpHdr, tcpData)
 		fmt.Println("[TCP] handler received packet in state SYN_RECEIVED")
+	case SYN_SENT:
+		fmt.Println("[TCP] handler received packet in state SYN_RECEIVED")
+		tcp.handleSynAck(socketEntry, tcpHdr)
 	default:
 		fmt.Println("No known state that matches: %d", socketEntry.state)
 	}
@@ -88,7 +91,7 @@ func (tcp *TCPStack) sendSyn(tableEntry *SocketTableEntry) error {
 	2. Add to socket table with SYN_RECEIVED state
 	3. send SYN-ACK
 */
-func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPFields, data []byte, localIP netip.Addr, destIP netip.Addr) {
+func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPFields, localIP netip.Addr, destIP netip.Addr) {
 	table := tcp.socketTable
 
 	/* check if Accept() has been called on listener */
@@ -137,16 +140,16 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 func (tcp *TCPStack) sendSynAck(tableEntry *SocketTableEntry, synSeq uint32) error {
 	/* make TCP header */
 	tcpHdr := &header.TCPFields{
-		SrcPort:       tableEntry.localPort,
-		DstPort:       tableEntry.destPort,
-		SeqNum:        tableEntry.seqNum,
+		SrcPort:       tableEntry.localPort, 	// TODO: from Ben - it is too early in the morning for me to think so 
+		DstPort:       tableEntry.destPort,		// 		 i may be tripping but this looks sus to me, do we need to flip these
+		SeqNum:        tableEntry.seqNum,		//	     i will revisit this some other time when i am clear minded
 		AckNum:        synSeq+1, 	/* Ack should be whatever we got from SYN + 1 */
-		DataOffset:    20, 			/* TODO: I have no idea what this is */
+		DataOffset:    20, 			
 		Flags:         header.TCPFlagSyn | header.TCPFlagAck,
-		WindowSize:    65535, 		/* TODO: figure out what this actually should be */
+		WindowSize:    65535,
 		Checksum:      0,
-		UrgentPointer: 0,
-	}
+		UrgentPointer: 0,	
+	}							// *********** TODO: later: get some nice table prints of the socketmap so we can verify stuff
 
 	/* send using sendTCP */
 	tcp.sendTCP(tcpHdr, tableEntry.localIP, tableEntry.destIP, make([]byte, 0))
@@ -155,7 +158,59 @@ func (tcp *TCPStack) sendSynAck(tableEntry *SocketTableEntry, synSeq uint32) err
 }
 
 /* handle incoming SYN-ACK and send ACK */
+func (tcp *TCPStack) handleSynAck(tableEntry *SocketTableEntry, tcpHeader header.TCPFields) error {
+	synAck := uint8(header.TCPFlagSyn) | uint8(header.TCPFlagAck)
+	if (tcpHeader.Flags & synAck) != synAck {
+		// not a SYN-ACK, drop	
+		return nil
+	}
 
+	/* lock table mutex since we are modifying it */
+	table := tcp.socketTable
+	table.mu.Lock()
+	defer table.mu.Unlock()
+
+	tableEntry.seqNum += 1
+	tableEntry.state = ESTABLISHED
+	tcp.sendAck(tableEntry, tcpHeader.SeqNum)
+	tableEntry.establishedChan <- tableEntry.state // unblock vconnnect
+	return nil
+}
+
+func (tcp *TCPStack) sendAck(tableEntry *SocketTableEntry, synSeq uint32) error {
+	tcpHdr := &header.TCPFields{
+		SrcPort:       tableEntry.localPort, // TODO: dir should be right but verify some other time
+		DstPort:       tableEntry.destPort,
+		SeqNum:        tableEntry.seqNum, // already ++ in handle
+		AckNum:        synSeq+1, 	/* Ack should be whatever we got from SYN + 1 */
+		DataOffset:    20, 			/* TODO: same as other instances */
+		Flags:         header.TCPFlagAck,
+		WindowSize:    65535, 		/* TODO: same as other instances */
+		Checksum:      0,
+		UrgentPointer: 0,
+	}
+
+	/* send using sendTCP */
+	tcp.sendTCP(tcpHdr, tableEntry.localIP, tableEntry.destIP, make([]byte, 0))
+	return nil
+}
+
+func (tcp *TCPStack) handleAck(tableEntry *SocketTableEntry, tcpHeader header.TCPFields) error {
+	if (tcpHeader.Flags & header.TCPFlagAck) == 0 {
+		// not an ACK, drop	
+		return nil
+	}
+
+	// lock
+	table := tcp.socketTable
+	table.mu.Lock()
+	defer table.mu.Unlock()
+
+	// return state
+	tableEntry.state = ESTABLISHED
+	tableEntry.listenSocket.connChan <- tableEntry.normalSocket // unblock vconnnect
+	return nil
+}
 
 /* match an incoming packet to a table entry */
 func (table *SocketTable) tableMatch(srcPort uint16, srcIP netip.Addr, destPort uint16, destIP netip.Addr) (*SocketTableEntry, error) {
@@ -193,6 +248,11 @@ func (table *SocketTable) tableMatch(srcPort uint16, srcIP netip.Addr, destPort 
 	takes in TCP Header because otherwise params would be insane
 
 	TODO: probably implement timeouts here for Milestone 1? I think that's in the handout
+		// TODO: reply from ben, i think not per this from handout:
+				For this milestone, you SHOULD NOT attempt to implement retransmissions for dropped 
+				handshake packets. Instead, we recommend leaving this for the final stage, when you’ll 
+				build a generic implementation for retransmissions that works with data packets too.
+
 */
 func (tcp *TCPStack) sendTCP(hdr *header.TCPFields, srcIP netip.Addr, destIP netip.Addr, data []byte) {
 	/* compute TCP checksum */

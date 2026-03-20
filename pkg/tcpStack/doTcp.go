@@ -4,9 +4,9 @@ package tcpstack
 
 NEXT STEPS:
 
-- Actually check ACKs?
-- send ERROR state to sender socket's establishedChan if some error
-	occurs during 3-way handshake so it won't hang forever? (not sure if we need to)
+- Actually check ACKs? ========================================================================> done
+- send ERROR state to sender socket's establishedChan if some error ===========================> added for handleSynAck (whcih is the only needed place rn i think)
+	occurs during 3-way handshake so it won't hang forever? (not sure if we need to) ==========> I think we do and this seems like the right mechanis,
 
 QUESTIONS FOR MILESTONE 1 MEETING:
 	- do we need to have random sequence nums or can we just start from 1?

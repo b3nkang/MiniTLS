@@ -42,14 +42,14 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 	tcpHdr, _, err := utils.ParseAndValidateTCP(hdr, payload) // TODO: re-add tcpData when we need. Its "_" right now because no use, so to turn off compiler warning
 	if err != nil {
 		/* checksum failed */
-		fmt.Println("Error: %s\n", err.Error())
+		fmt.Printf("Error: %s\n", err.Error())
 	}
 
 	/* 2. match tuple to our table; tableMatch(srcPort, srcIP, destPort, destIP) */
 	socketEntry, err := table.tableMatch(tcpHdr.SrcPort, hdr.Src, tcpHdr.DstPort, hdr.Dst)
 	if err != nil {
 		/* didn't find match */
-		fmt.Println("[TCP] No normal or listener socket open that matches the following:\n")
+		fmt.Println("[TCP] No normal or listener socket open that matches the following:")
 		fmt.Printf("Src Port: %s\nSrc IP: %s\n Dest Port: %s\n Dest IP: %s\n", string(tcpHdr.SrcPort), hdr.Src.String(), string(tcpHdr.DstPort), hdr.Dst.String())
 	} 
 	
@@ -70,7 +70,7 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 		fmt.Println("[TCP] handler received packet in state SYN-SENT -> handling SYN-ACK")
 		tcp.handleSynAck(socketEntry, tcpHdr)
 	default:
-		fmt.Println("No known state that matches: %d", socketEntry.state)
+		fmt.Printf("No known state that matches: %d\n", socketEntry.state)
 	}
 
 }

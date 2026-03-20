@@ -103,10 +103,11 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
     // block until state changes
     for {
         state := <-entry.establishedChan
-        if state == ESTABLISHED {
+        switch state {
+		case ESTABLISHED:
             return conn, nil
 		/* TODO: actually send this situation if there is an error in the 3-way handshake */
-        } else if state == ERROR {
+        case ERROR:
 			return nil, errors.New("Error ocurred before 3-way handshake concluded")
 		}
     }

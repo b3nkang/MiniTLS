@@ -176,13 +176,20 @@ func (tcp *TCPStack) handleSynAck(tableEntry *SocketTableEntry, tcpHeader header
 	synAck := uint8(header.TCPFlagSyn) | uint8(header.TCPFlagAck)
 	if (tcpHeader.Flags & synAck) != synAck {
 		// not a SYN-ACK, drop	
-		return nil
+		tableEntry.establishedChan <- ERROR // unblock vconnect
+		return fmt.Errorf("flags for handleSynAck do not match expected SYN | ACK")
 	}
 
 	/* lock table mutex since we are modifying it */
 	table := tcp.socketTable
 	table.mu.Lock()
 	defer table.mu.Unlock()
+
+	// verify ack has been updated correctly
+	if tcpHeader.AckNum != tableEntry.seqNum+1 {
+		tableEntry.establishedChan <- ERROR // unblock vconnect
+		return fmt.Errorf("AckNum does not match SeqNum; %d != %d", tcpHeader.AckNum, tableEntry.seqNum+1)
+	}
 
 	tableEntry.seqNum += 1
 	tableEntry.state = ESTABLISHED
@@ -219,6 +226,11 @@ func (tcp *TCPStack) handleAck(tableEntry *SocketTableEntry, tcpHeader header.TC
 	table := tcp.socketTable
 	table.mu.Lock()
 	defer table.mu.Unlock()
+
+	// verify ack has been updated correctly
+	if tcpHeader.AckNum != tableEntry.seqNum+1 {
+		return fmt.Errorf("AckNum does not match SeqNum; %d != %d", tcpHeader.AckNum, tableEntry.seqNum+1)
+	}
 
 	// return state
 	tableEntry.state = ESTABLISHED

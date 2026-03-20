@@ -37,6 +37,7 @@ func (tcp *TCPStack) VListen(port uint16) (*VTCPListener, error) {
 		localPort:	listener.port,
 		state: 	 	LISTEN,
 		socketID:   tcp.socketTable.nextID,
+		listenSocket: listener,
 	}
 
 	/* increment next ID for next entry */
@@ -104,6 +105,7 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
         state := <-entry.establishedChan
         if state == ESTABLISHED {
             return conn, nil
+		/* TODO: actually send this situation if there is an error in the 3-way handshake */
         } else if state == ERROR {
 			return nil, errors.New("Error ocurred before 3-way handshake concluded")
 		}

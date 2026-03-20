@@ -74,7 +74,7 @@ func (tcp *TCPStack) aCommand(port uint16) {
 		return
 	}
 
-	/* idk what to do here really... */
+	/* should we be looping forever? idk what to do here really... */
 	for {
 		fmt.Println("calling Accept, this will just block for now and not return")
 		conn, err := listener.VAccept()
@@ -155,4 +155,46 @@ func addrToString(a netip.Addr) string {
 		return "0.0.0.0"
 	}
 	return a.String()
+}
+
+/* print socket table entry for debugging */
+func PrintSocketTableEntry(e *SocketTableEntry) {
+	tw := tablewriter.NewWriter(os.Stdout)
+	fmt.Println("[TCP PRINT] Printing socket table entry")
+
+	tw.Header([]string{"Field", "Value"})
+
+	/* deal with undefined stuff */
+	ptrStr := func(p any) string {
+		if p == nil {
+			return "nil"
+		}
+		return fmt.Sprintf("%p", p)
+	}
+
+	/* print channels */
+	chanStr := func(c chan int) string {
+		if c == nil {
+			return "nil"
+		}
+		return fmt.Sprintf("%p", c)
+	}
+
+	tw.Append([]string{"socketID", fmt.Sprint(e.socketID)})
+	tw.Append([]string{"state", stateToString(e.state)})
+
+	tw.Append([]string{"localIP", addrToString(e.localIP)})
+	tw.Append([]string{"localPort", fmt.Sprint(e.localPort)})
+
+	tw.Append([]string{"destIP", addrToString(e.destIP)})
+	tw.Append([]string{"destPort", fmt.Sprint(e.destPort)})
+
+	tw.Append([]string{"seqNum", fmt.Sprint(e.seqNum)})
+
+	tw.Append([]string{"normalSocket", ptrStr(e.normalSocket)})
+	tw.Append([]string{"listenSocket", ptrStr(e.listenSocket)})
+
+	tw.Append([]string{"establishedChan", chanStr(e.establishedChan)})
+
+	tw.Render()
 }

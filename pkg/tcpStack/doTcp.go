@@ -10,10 +10,13 @@ NEXT STEPS:
 
 QUESTIONS FOR MILESTONE 1 MEETING:
 	- do we need to have random sequence nums or can we just start from 1?
+			====> definitely need random seq nums or else we might get duplicates from an old connect and break tablematch
 	- do we need to verify Acks in 3-way handshake? As in that they are the right numbers?
+			====> i think we should so i'm going to add it in the branch here but not for the milestone impl
 	- can we keep a reference to the OG listen socket in our entry for normal sockets? so that we can
 		tell it to return from Accept()?
 	- should the aCommand() function loop forever? if so, how do we read?
+			====> i think it's fime
 
 */
 
@@ -143,7 +146,6 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 	table.nextID++ /* need to increment for next connection */
 	table.socketMap[entry.socketID] = entry
 
-	/* TODO: send SYN-ACK */
 	tcp.sendSynAck(entry, tcpHeader.SeqNum)
 }
 

@@ -171,8 +171,30 @@ func (ipStack *IPStack) RunIPLayer() {
 }
 
 // ********************** DELIVERY OR FORWARDING LOGIC **********************
-/* IP Forwarding method: 
+/* 
+	---TCP SRC COMPONENT---
+	All Schlaraffian ISPs: 10.75.0.0/16
+	Y.com: 10.133.7.0/24
 */
+func SRCFilter(hdr *ipv4header.IPv4Header) bool {
+	var sISP = netip.MustParsePrefix("10.75.0.0/16")
+	var yNet            = netip.MustParsePrefix("10.133.7.0/24")
+	/* if source is sISP and dest is yNet, return true */
+	if sISP.Contains(hdr.Src) {
+		if yNet.Contains(hdr.Dst) {
+			return true
+		}
+	}
+	/* if source is yNet and dest is sISP, return true */
+	if yNet.Contains(hdr.Src) {
+		if sISP.Contains(hdr.Dst) {
+			return true
+		}
+	}
+	return false
+}
+
+/* IP Forwarding method */
 func (ipStack *IPStack) ipForwarding(hdr *ipv4header.IPv4Header, message []byte) {	
 	// fmt.Printf("[IP] Received IP packet...\nHeader:  %v\nChecksum:  OK\nMessage:  %s\n", hdr, string(message))
 
@@ -197,6 +219,12 @@ func (ipStack *IPStack) ipForwarding(hdr *ipv4header.IPv4Header, message []byte)
 	if destFound {
 		// fmt.Printf("> ") // print for REPL
 		return // we're done, wait for next paket
+	}
+
+	/* TCP SRC FILTER COMPONENT CHECK */
+	if SRCFilter(hdr) {
+		/* drop packet if filter conditions are met */
+		return
 	}
 
 	// ---- FORWARDING CASE ----

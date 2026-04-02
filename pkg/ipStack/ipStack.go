@@ -178,7 +178,7 @@ func (ipStack *IPStack) RunIPLayer() {
 */
 func SRCFilter(hdr *ipv4header.IPv4Header) bool {
 	var sISP = netip.MustParsePrefix("10.75.0.0/16")
-	var yNet            = netip.MustParsePrefix("10.133.7.0/24")
+	var yNet = netip.MustParsePrefix("10.33.7.0/24")
 	/* if source is sISP and dest is yNet, return true */
 	if sISP.Contains(hdr.Src) {
 		if yNet.Contains(hdr.Dst) {
@@ -224,6 +224,7 @@ func (ipStack *IPStack) ipForwarding(hdr *ipv4header.IPv4Header, message []byte)
 	/* TCP SRC FILTER COMPONENT CHECK */
 	if SRCFilter(hdr) {
 		/* drop packet if filter conditions are met */
+		fmt.Println("packet dest is filtered, dropping packet")
 		return
 	}
 
@@ -246,7 +247,7 @@ func (ipStack *IPStack) ipForwarding(hdr *ipv4header.IPv4Header, message []byte)
 		fmt.Printf("[IP] Entry in FwdTable found, but cost was %d, >= INF. Dropping packet...\n> ", entry.Cost)
 		return
 	}
-
+	fmt.Println("GOT TO FORWARD")
 	// check how to forward
 	switch entry.Type {
 		case SourceTypeLocal:

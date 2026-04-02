@@ -33,10 +33,12 @@ func main() {
 
 	/* start handling IP messages */
 	go ipStack.RunIPLayer()
-	/* start RIP */
-	go ipStack.UpdateLoop()
-	// start listening for timeout
-	go ipStack.TimeoutLoop()
+
+	/* start RIP but only if lnx says so */
+	if ipStack.RipInfo.RipUpdateRate > 0 {
+		go ipStack.UpdateLoop()
+		go ipStack.TimeoutLoop()
+	}
 
 	/* start REPL */
 	ipStack.StartREPL()

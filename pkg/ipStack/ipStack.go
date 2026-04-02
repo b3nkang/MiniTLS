@@ -173,21 +173,26 @@ func (ipStack *IPStack) RunIPLayer() {
 // ********************** DELIVERY OR FORWARDING LOGIC **********************
 /* 
 	---TCP SRC COMPONENT---
+
+	Pair 1-
 	All Schlaraffian ISPs: 10.75.0.0/16
-	Y.com: 10.133.7.0/24
+	Y.com: 10.33.7.0/24
+
+	Pair 2-
+	All Schlaraffian ISPs: 10.75.0.0/16
+	XT streaming service: 10.7.7.0/16
 */
-func SRCFilter(hdr *ipv4header.IPv4Header) bool {
-	var sISP = netip.MustParsePrefix("10.75.0.0/16")
-	var yNet = netip.MustParsePrefix("10.33.7.0/24")
-	/* if source is sISP and dest is yNet, return true */
-	if sISP.Contains(hdr.Src) {
-		if yNet.Contains(hdr.Dst) {
+func SRCFilter(hdr *ipv4header.IPv4Header, stakeholderAddr1 string, stakeholderAddr2 string) bool {
+	var s1 = netip.MustParsePrefix(stakeholderAddr1)
+	var s2 = netip.MustParsePrefix(stakeholderAddr2)
+
+	if s1.Contains(hdr.Src) {
+		if s2.Contains(hdr.Dst) {
 			return true
 		}
 	}
-	/* if source is yNet and dest is sISP, return true */
-	if yNet.Contains(hdr.Src) {
-		if sISP.Contains(hdr.Dst) {
+	if s2.Contains(hdr.Src) {
+		if s1.Contains(hdr.Dst) {
 			return true
 		}
 	}
@@ -221,10 +226,25 @@ func (ipStack *IPStack) ipForwarding(hdr *ipv4header.IPv4Header, message []byte)
 		return // we're done, wait for next paket
 	}
 
-	/* TCP SRC FILTER COMPONENT CHECK */
-	if SRCFilter(hdr) {
+	// ---------- TCP SRC FILTER COMPONENT CHECK -----------
+	/*
+		Pair 1-
+		All Schlaraffian ISPs: 10.75.0.0/16
+		Y.com: 10.33.7.0/24
+	*/
+	if SRCFilter(hdr,"10.75.0.0/16","10.33.7.0/24") {
 		/* drop packet if filter conditions are met */
-		fmt.Println("packet dest is filtered, dropping packet")
+		fmt.Println("dropping packet moving between Schlaraffian ISP and Y.com")
+		return
+	}
+	/*
+		Pair 2-
+		All Schlaraffian ISPs: 10.75.0.0/16
+		XT streaming service: 10.7.7.0/16
+	*/
+	if SRCFilter(hdr,"10.75.0.0/16","10.7.7.0/16") {
+		/* drop packet if filter conditions are met */
+		fmt.Println("dropping packet moving between Schlaraffian ISP and XT streaming service")
 		return
 	}
 
@@ -247,7 +267,7 @@ func (ipStack *IPStack) ipForwarding(hdr *ipv4header.IPv4Header, message []byte)
 		fmt.Printf("[IP] Entry in FwdTable found, but cost was %d, >= INF. Dropping packet...\n> ", entry.Cost)
 		return
 	}
-	fmt.Println("GOT TO FORWARD")
+
 	// check how to forward
 	switch entry.Type {
 		case SourceTypeLocal:

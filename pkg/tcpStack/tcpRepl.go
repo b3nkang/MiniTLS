@@ -97,8 +97,8 @@ func (tcp *TCPStack) cCommand(addr netip.Addr, port uint16) {
 
 /* list socket table */
 func (table *SocketTable) listSockets() {
-	table.mu.Lock()
-	defer table.mu.Unlock()
+	// table.mu.Lock()
+	// defer table.mu.Unlock()
 
 	tw := tablewriter.NewWriter(os.Stdout)
 

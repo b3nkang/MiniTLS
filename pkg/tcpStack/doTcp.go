@@ -4,16 +4,19 @@ package tcpstack
 
 NEXT STEPS:
 
-- Actually check ACKs?
-- send ERROR state to sender socket's establishedChan if some error
-	occurs during 3-way handshake so it won't hang forever? (not sure if we need to)
+- Actually check ACKs? ========================================================================> done
+- send ERROR state to sender socket's establishedChan if some error ===========================> added for handleSynAck (whcih is the only needed place rn i think)
+	occurs during 3-way handshake so it won't hang forever? (not sure if we need to) ==========> I think we do and this seems like the right mechanis,
 
 QUESTIONS FOR MILESTONE 1 MEETING:
 	- do we need to have random sequence nums or can we just start from 1?
+			====> definitely need random seq nums or else we might get duplicates from an old connect and break tablematch
 	- do we need to verify Acks in 3-way handshake? As in that they are the right numbers?
+			====> i think we should so i'm going to add it in the branch here but not for the milestone impl
 	- can we keep a reference to the OG listen socket in our entry for normal sockets? so that we can
 		tell it to return from Accept()?
 	- should the aCommand() function loop forever? if so, how do we read?
+			====> i think it's fime
 
 */
 
@@ -39,14 +42,14 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 	tcpHdr, _, err := utils.ParseAndValidateTCP(hdr, payload) // TODO: re-add tcpData when we need. Its "_" right now because no use, so to turn off compiler warning
 	if err != nil {
 		/* checksum failed */
-		fmt.Println("Error: %s\n", err.Error())
+		fmt.Printf("Error: %s\n", err.Error())
 	}
 
 	/* 2. match tuple to our table; tableMatch(srcPort, srcIP, destPort, destIP) */
 	socketEntry, err := table.tableMatch(tcpHdr.SrcPort, hdr.Src, tcpHdr.DstPort, hdr.Dst)
 	if err != nil {
 		/* didn't find match */
-		fmt.Println("[TCP] No normal or listener socket open that matches the following:\n")
+		fmt.Println("[TCP] No normal or listener socket open that matches the following:")
 		fmt.Printf("Src Port: %s\nSrc IP: %s\n Dest Port: %s\n Dest IP: %s\n", string(tcpHdr.SrcPort), hdr.Src.String(), string(tcpHdr.DstPort), hdr.Dst.String())
 	} 
 	
@@ -67,7 +70,7 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 		fmt.Println("[TCP] handler received packet in state SYN-SENT -> handling SYN-ACK")
 		tcp.handleSynAck(socketEntry, tcpHdr)
 	default:
-		fmt.Println("No known state that matches: %d", socketEntry.state)
+		fmt.Printf("No known state that matches: %d\n", socketEntry.state)
 	}
 
 }
@@ -143,7 +146,6 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 	table.nextID++ /* need to increment for next connection */
 	table.socketMap[entry.socketID] = entry
 
-	/* TODO: send SYN-ACK */
 	tcp.sendSynAck(entry, tcpHeader.SeqNum)
 }
 
@@ -174,13 +176,20 @@ func (tcp *TCPStack) handleSynAck(tableEntry *SocketTableEntry, tcpHeader header
 	synAck := uint8(header.TCPFlagSyn) | uint8(header.TCPFlagAck)
 	if (tcpHeader.Flags & synAck) != synAck {
 		// not a SYN-ACK, drop	
-		return nil
+		tableEntry.establishedChan <- ERROR // unblock vconnect
+		return fmt.Errorf("flags for handleSynAck do not match expected SYN | ACK")
 	}
 
 	/* lock table mutex since we are modifying it */
 	table := tcp.socketTable
 	table.mu.Lock()
 	defer table.mu.Unlock()
+
+	// verify ack has been updated correctly
+	if tcpHeader.AckNum != tableEntry.seqNum+1 {
+		tableEntry.establishedChan <- ERROR // unblock vconnect
+		return fmt.Errorf("AckNum does not match SeqNum; %d != %d", tcpHeader.AckNum, tableEntry.seqNum+1)
+	}
 
 	tableEntry.seqNum += 1
 	tableEntry.state = ESTABLISHED
@@ -217,6 +226,11 @@ func (tcp *TCPStack) handleAck(tableEntry *SocketTableEntry, tcpHeader header.TC
 	table := tcp.socketTable
 	table.mu.Lock()
 	defer table.mu.Unlock()
+
+	// verify ack has been updated correctly
+	if tcpHeader.AckNum != tableEntry.seqNum+1 {
+		return fmt.Errorf("AckNum does not match SeqNum; %d != %d", tcpHeader.AckNum, tableEntry.seqNum+1)
+	}
 
 	// return state
 	tableEntry.state = ESTABLISHED

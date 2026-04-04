@@ -113,6 +113,48 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
     }
 }
 
+/* returns bytes written (or error) */
+func (conn *VTCPConn) VWrite(data []byte) (int, error) {
+	/* give the data to the conn's sendbuf data channel */
+	conn.sendBuf.mu.Lock()
+	defer conn.sendBuf.mu.Unlock()
+
+	buf := conn.sendBuf
+
+	/* write data to buffer--only as much as fits */
+	spaceInBuf := MAX_WIN_SIZE - (buf.lbw + 1) /* say last byte written is 0 and size is 5: 5-0 = 5 but we want 4 so (lbw + 1) */
+	if spaceInBuf <= 0 {
+		fmt.Println("No space in buffer. Returning for now...eventually deal with this")
+		return 0, nil
+	}
+
+	/* truncate bytes to fit in buffer if necessary */
+	numBytesToWrite := len(data)
+	if numBytesToWrite > int(spaceInBuf) {
+		numBytesToWrite = int(spaceInBuf)
+	}
+
+	/* write bytes to buffer */
+	/* NOTE: when we switch to circular buffer, we cannot do this--need a loop to write one byte at a time -- should 
+		just make that a function of the circular buffer struct though */
+	copy(buf.buf[buf.lbw + 1:], data[:numBytesToWrite])
+
+	/* tell sending thread we put stuff in buffer 
+		apparently (according to chat, we want this kinda weird structure)
+		this will only signal to this channel if it ISN'T full
+		if we did: buf.dataWrittenToBuf <- struct{}{} without the select/case/default situation,
+		it would block and we'd hold this mutex. if the channel is already full
+		i.e. someone else wrote to it, we could cause deadlock.
+		if the channel is full, the sender will check the buffer anyway and our data will be sent.
+		at least that's the idea...? */
+	select {
+	case buf.dataWrittenToBuf <- struct{}{}:
+	default:
+	}
+
+	return numBytesToWrite, nil
+}
+
 /* verify that random port doesn't conflict with existing connection in table */
 func (table *SocketTable) portIsUnique(newPort uint16) bool {
 	for _, entry := range table.socketMap {

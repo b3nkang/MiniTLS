@@ -58,6 +58,17 @@ func (tcp *TCPStack) HandleREPLCommands() {
 			}
 			port := uint16(portInt)
 			go tcp.cCommand(addr, port) // so REPL dont block
+		case "s":
+			if len(parts) != 3 {
+				fmt.Println("Usage: s <socketID> <bytes>")
+				continue
+			}
+			sID, err := strconv.Atoi(parts[1])
+			if err != nil {
+				fmt.Println("Socket ID must be an integer")
+				continue
+			}
+			go tcp.sCommand(sID, []byte(parts[2]))
 		case "ls":
 			tcp.socketTable.listSockets()
 		default:
@@ -93,6 +104,40 @@ func (tcp *TCPStack) cCommand(addr netip.Addr, port uint16) {
         return
     }
     fmt.Println("Connected!", conn)
+}
+
+/* call VWrite after finding correct socket entry in table */
+func (tcp *TCPStack) sCommand(socketNum int, data []byte) {
+	/* check that socketID exists */
+	tcp.socketTable.mu.Lock()
+	socket, exists := tcp.socketTable.socketMap[socketNum]
+	tcp.socketTable.mu.Unlock()
+
+	if !exists {
+		fmt.Println("Invalid socket ID number")
+		return
+	}
+	/* check that normal socket exists */
+	if socket.normalSocket == nil {
+		fmt.Println("Socket table does not have TCPConn associated yet")
+		return
+	}
+	/* check that conn is established */
+	if socket.state != ESTABLISHED {
+		fmt.Printf("Connection with %d not ESTABLISHED\n", socketNum)
+		return
+	}
+
+	/* call VWrite */
+	bytesWritten, err := socket.normalSocket.VWrite(data)
+
+	if err != nil {
+		fmt.Printf("%d bytes written to socket %d\n", bytesWritten, socketNum)
+		return
+	} else {
+		fmt.Printf("Error with VWrite: %s", err.Error())
+		return
+	}
 }
 
 /* list socket table */

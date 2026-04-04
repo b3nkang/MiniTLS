@@ -66,7 +66,32 @@ type VTCPListener struct {
 /* actual "normal socket" object */
 type VTCPConn struct {
 	packetChan chan []byte
+
+	// send buffer
+	// receive buffer
+	// channel from VWrite to send buffer thread
+	// channel from handleTCP to receive buffer thread
+	// channel from recieve buffer thread to VRead
+
+	// 	- retransmission queue (later) (could also go in Conn) (will require third thread)
+
 }
+
+/* send buffer struct
+	- actual buffer
+
+	- pointers into buffer
+	
+	- our available window size
+	- 
+*/
+
+/* receive buffer struct
+	- actual buffer
+	- min heap for early arrivals
+	- pointers into buffer
+
+*/
 
 
 

@@ -4,19 +4,22 @@ package tcpstack
 
 NEXT STEPS:
 
-- Actually check ACKs? ========================================================================> done
-- send ERROR state to sender socket's establishedChan if some error ===========================> added for handleSynAck (whcih is the only needed place rn i think)
-	occurs during 3-way handshake so it won't hang forever? (not sure if we need to) ==========> I think we do and this seems like the right mechanis,
+1. set up buffer data structures in Conn after handshake completes
+	- simple array for now
+	- with pointers
+	- plus send/receive threads
+2. VWrite and VRead (basic)
+	- VWrite: pass bytes through channel to send thread
+3. Sending
+	- load bytes into buffer
+	- send segments
+4. Receiving
+	- add case for handling basic ACK
+	- pass ACK to receiving thread
+	- passing information from ACK to sending thread (? or any way to deal with this)
 
-QUESTIONS FOR MILESTONE 1 MEETING:
-	- do we need to have random sequence nums or can we just start from 1?
-			====> definitely need random seq nums or else we might get duplicates from an old connect and break tablematch
-	- do we need to verify Acks in 3-way handshake? As in that they are the right numbers?
-			====> i think we should so i'm going to add it in the branch here but not for the milestone impl
-	- can we keep a reference to the OG listen socket in our entry for normal sockets? so that we can
-		tell it to return from Accept()?
-	- should the aCommand() function loop forever? if so, how do we read?
-			====> i think it's fime
+- don't worry about early arrivals initially (just ignore if wrong sequence num)
+- refactor handshake methods into separate file
 
 */
 

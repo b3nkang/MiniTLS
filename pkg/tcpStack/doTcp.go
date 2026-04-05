@@ -196,11 +196,13 @@ func (tcp *TCPStack) handlePayload(tableEntry *SocketTableEntry, tcpHeader heade
 	recvBuf.mu.Lock()
 	copy(recvBuf.buf[recvBuf.nxt:recvBuf.nxt+payLen],payload[:payLen])
 	recvBuf.currSize += payLen // no check for exceeding bufsize bc sender won't send exceeding since sender-side logic handles
-	recvBuf.dataToRead <- recvBuf.buf[recvBuf.nxt:recvBuf.nxt+payLen]
+	recvBuf.nxt += payLen
 	activeUpdatedSeqNum := tcpHeader.SeqNum+payLen
 	recvBuf.mu.Unlock()
 
+    recvBuf.dataToRead <- payload
 	tcp.sendPureAck(tableEntry,activeUpdatedSeqNum)
+	
 	return nil
 }
 

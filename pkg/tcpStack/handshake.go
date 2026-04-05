@@ -9,13 +9,13 @@ import (
 )
 
 /* send initial SYN */
-func (tcp *TCPStack) sendSyn(tableEntry *SocketTableEntry) error {
+func (entry *SocketTableEntry) sendSyn() error {
 	fmt.Println("[TCP] entering send SYN function")
 	/* make TCP header */
 	tcpHdr := &header.TCPFields{
-		SrcPort:       tableEntry.localPort,
-		DstPort:       tableEntry.destPort,
-		SeqNum:        tableEntry.seqNum,
+		SrcPort:       entry.localPort,
+		DstPort:       entry.destPort,
+		SeqNum:        entry.seqNum,
 		DataOffset:    20, 			/* TODO: I have no idea what this is */
 		Flags:         header.TCPFlagSyn,
 		WindowSize:    65535,
@@ -24,11 +24,14 @@ func (tcp *TCPStack) sendSyn(tableEntry *SocketTableEntry) error {
 	}
 
 	/* send using sendTCP */
-	tcp.sendTCP(tcpHdr, tableEntry.localIP, tableEntry.destIP, make([]byte, 0))
-
-	/* print for now */
-	fmt.Println("[TCP] printing socket table for now")
-	tcp.socketTable.listSockets()
+	sendReq := &SendRequest{
+		tcpHeader: tcpHdr,
+		data: make([]byte, 0),
+		sourceIP: entry.localIP,
+		destIP: entry.destIP,
+	}
+	/* enqueues request on tcpStack's request channel -> eventually calls SendTCP */
+	entry.sendPacketFunc(sendReq)	
 	return nil
 }
 
@@ -61,6 +64,7 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 	conn := &VTCPConn{
 		packetChan: make(chan []byte),
 	}
+
 	fmt.Println("[TCP] normal socket created from listen socket--adding to socket table")
 	/* make socket table entry and add in correct state */
 	entry := &SocketTableEntry{
@@ -75,21 +79,26 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 		seqNum: utils.GenerateNewSeq(), /* generate random sequence number here for starting */
 	}
 
+	/* set the function here while we have access to tcp stack -- conn will not when it's trying to send */
+	entry.sendPacketFunc = func(sendReq *SendRequest) {
+		tcp.sendRequests <- sendReq
+	}
+
 	table.nextID++ /* need to increment for next connection */
 	table.socketMap[entry.socketID] = entry
 
 	table.mu.Unlock() /* UNLOCK MUTEX BEFORE SENDING SYNACK */
-	tcp.sendSynAck(entry, tcpHeader.SeqNum)
+	entry.sendSynAck(tcpHeader.SeqNum)
 }
 
 
 /* send SYN-ACK (second part of 3-way handshake) */
-func (tcp *TCPStack) sendSynAck(tableEntry *SocketTableEntry, synSeq uint32) error {
+func (entry *SocketTableEntry) sendSynAck(synSeq uint32) error {
 	/* make TCP header */
 	tcpHdr := &header.TCPFields{
-		SrcPort:       tableEntry.localPort, 	// TODO: from Ben - it is too early in the morning for me to think so 
-		DstPort:       tableEntry.destPort,		// 		 i may be tripping but this looks sus to me, do we need to flip these
-		SeqNum:        tableEntry.seqNum,		//	     i will revisit this some other time when i am clear minded
+		SrcPort:       entry.localPort, 	// TODO: from Ben - it is too early in the morning for me to think so 
+		DstPort:       entry.destPort,		// 		 i may be tripping but this looks sus to me, do we need to flip these
+		SeqNum:        entry.seqNum,		//	     i will revisit this some other time when i am clear minded
 		AckNum:        synSeq+1, 	/* Ack should be whatever we got from SYN + 1 */
 		DataOffset:    20, 			
 		Flags:         header.TCPFlagSyn | header.TCPFlagAck,
@@ -99,7 +108,14 @@ func (tcp *TCPStack) sendSynAck(tableEntry *SocketTableEntry, synSeq uint32) err
 	}							// *********** TODO: later: get some nice table prints of the socketmap so we can verify stuff
 
 	/* send using sendTCP */
-	tcp.sendTCP(tcpHdr, tableEntry.localIP, tableEntry.destIP, make([]byte, 0))
+	sendReq := &SendRequest{
+		tcpHeader: tcpHdr,
+		data: make([]byte, 0),
+		sourceIP: entry.localIP,
+		destIP: entry.destIP,
+	}
+	/* enqueues request on tcpStack's request channel -> eventually calls SendTCP */
+	entry.sendPacketFunc(sendReq)
 	return nil
 
 }
@@ -119,26 +135,28 @@ func (tcp *TCPStack) handleSynAck(tableEntry *SocketTableEntry, tcpHeader header
 
 	// verify ack has been updated correctly
 	if tcpHeader.AckNum != tableEntry.seqNum+1 {
+		table.mu.Unlock()
 		tableEntry.establishedChan <- ERROR // unblock vconnect
 		return fmt.Errorf("AckNum does not match SeqNum; %d != %d", tcpHeader.AckNum, tableEntry.seqNum+1)
 	}
 
 	tableEntry.seqNum = tcpHeader.AckNum
+	tableEntry.lastKnownAck = tcpHeader.AckNum
 	tableEntry.state = ESTABLISHED
 	table.mu.Unlock() /* UNLOCK MUTEX BEFORE CALLING SENDACK */
-	tcp.sendAckHandshake(tableEntry, tcpHeader.SeqNum)
+	tableEntry.sendAckHandshake(tcpHeader.SeqNum)
 	/* set up send and recv buffers for comms */
-	tableEntry.normalSocket.initBufs()
+	tableEntry.initBufs(tableEntry.seqNum)
 	
 	tableEntry.establishedChan <- tableEntry.state // unblock vconnnect
 	return nil
 }
 
-func (tcp *TCPStack) sendAckHandshake(tableEntry *SocketTableEntry, passiveSeqNum uint32) error {
+func (entry *SocketTableEntry) sendAckHandshake(passiveSeqNum uint32) error {
 	tcpHdr := &header.TCPFields{
-		SrcPort:       tableEntry.localPort, // TODO: dir should be right but verify some other time
-		DstPort:       tableEntry.destPort,
-		SeqNum:        tableEntry.seqNum, // already ++ in handle
+		SrcPort:       entry.localPort, // TODO: dir should be right but verify some other time
+		DstPort:       entry.destPort,
+		SeqNum:        entry.seqNum, // already ++ in handle
 		AckNum:        passiveSeqNum+1, 	/* Ack should be whatever we got from SYN + 1 */
 		DataOffset:    20, 			/* TODO: same as other instances */
 		Flags:         header.TCPFlagAck,
@@ -146,9 +164,15 @@ func (tcp *TCPStack) sendAckHandshake(tableEntry *SocketTableEntry, passiveSeqNu
 		Checksum:      0,
 		UrgentPointer: 0,
 	}
-
 	/* send using sendTCP */
-	tcp.sendTCP(tcpHdr, tableEntry.localIP, tableEntry.destIP, make([]byte, 0))
+	sendReq := &SendRequest{
+		tcpHeader: tcpHdr,
+		data: make([]byte, 0),
+		sourceIP: entry.localIP,
+		destIP: entry.destIP,
+	}
+	/* enqueues request on tcpStack's request channel -> eventually calls SendTCP */
+	entry.sendPacketFunc(sendReq)
 	return nil
 }
 
@@ -165,6 +189,7 @@ func (tcp *TCPStack) handleAckHandshake(tableEntry *SocketTableEntry, tcpHeader 
 
 	// verify ack has been updated correctly
 	if tcpHeader.AckNum != tableEntry.seqNum+1 {
+		table.mu.Unlock()
 		return fmt.Errorf("AckNum does not match SeqNum; %d != %d", tcpHeader.AckNum, tableEntry.seqNum+1)
 	}
 	// if so, update passive side's seqNum in tableentry to be consistent
@@ -172,16 +197,11 @@ func (tcp *TCPStack) handleAckHandshake(tableEntry *SocketTableEntry, tcpHeader 
 
 	// return state
 	tableEntry.state = ESTABLISHED
+	tableEntry.lastKnownAck = tcpHeader.AckNum
 
 	/* init send/recv bufs before returning */
-	normalSock := tableEntry.normalSocket
-	normalSock.initBufs()
-	// TODO: all pointer logic below is naive and may need to be revised
-	normalSock.recvBuf.lbr = tableEntry.seqNum % MAX_WIN_SIZE 
-	normalSock.recvBuf.nxt = normalSock.recvBuf.lbr + 1 
-	if normalSock.recvBuf.lbr == MAX_WIN_SIZE-1 {
-		normalSock.recvBuf.nxt = 0
-	}
+	tableEntry.initBufs(tableEntry.seqNum)
+
 	// TODO: init min heap here for early arrivals
 
 	table.mu.Unlock() /* UNLOCK MUTEX BEFORE PASSING SOCKET */

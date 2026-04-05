@@ -4,6 +4,7 @@ import (
 	"ip-isabelle-and-ben/pkg/ipStack"
 	"net/netip"
 	"sync"
+	"github.com/google/netstack/tcpip/header"
 )
 
 /* Represent states
@@ -33,6 +34,7 @@ type SocketTableEntry struct {
 
 	/* header stuff */
 	seqNum 			uint32
+	lastKnownAck	uint32
 
 	/* store a socket (either normal or listener) */
 	normalSocket	*VTCPConn
@@ -41,6 +43,9 @@ type SocketTableEntry struct {
 	/* for telling initial sender that connection has been established
 		after 3-way handshake */
 	establishedChan chan int
+
+	/* for sending packets without exposing whole tcpStack */
+	sendPacketFunc	func(request *SendRequest) /* use to send packets from tcpStack */
 }
 
 /* 1 per host: stores all info about open sockets 
@@ -54,10 +59,19 @@ type SocketTable struct {
 	mu 				sync.Mutex 	 /* necessary to protect table */
 }
 
-/* tragic but yeah gotta have this too */
 type TCPStack struct {
 	socketTable 	*SocketTable
 	ipStack			*ipStack.IPStack
+
+	sendRequests 	chan *SendRequest /* channel for conns to send packets they want sent out */
+}
+
+/* sent from a Conn/tableEntry to the tcp stack to send out packets */
+type SendRequest struct {
+	tcpHeader 	*header.TCPFields
+	data 		[]byte
+	sourceIP 	netip.Addr
+	destIP 		netip.Addr
 }
 
 /* listener socket object */
@@ -87,6 +101,7 @@ type SendBuf struct {
 	currSize uint32	/* curr amt of data in buf */	
 
 	mu sync.Mutex 	/* mutex for buffer */
+	base uint32 	/* sequence num at index=0 */
 
 	/* pointers */
 	nxt uint32 				/* nxt byte to send */
@@ -102,6 +117,7 @@ type RecvBuf struct {
 	currSize uint32	/* curr amt of data in buf */
 
 	mu sync.Mutex 	/* mutex between incoming packet logic and vread */
+	base uint32 	/* sequence num at index=0*/
 
 	/* pointers */
 	lbr uint32		/* last byte read (next byte that gets read when app calls read) */

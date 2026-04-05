@@ -147,7 +147,7 @@ func (tcp *TCPStack) sCommand(socketNum int, data []byte) {
 	/* call VWrite */
 	bytesWritten, err := socket.normalSocket.VWrite(data)
 
-	if err != nil {
+	if err == nil {
 		fmt.Printf("%d bytes written to socket %d\n", bytesWritten, socketNum)
 		return
 	} else {
@@ -156,6 +156,7 @@ func (tcp *TCPStack) sCommand(socketNum int, data []byte) {
 	}
 }
 
+/* call VRead after locating socket */
 func (tcp *TCPStack) rCommand(socketNum int, numBytes int) {
     tcp.socketTable.mu.Lock()
     socket, exists := tcp.socketTable.socketMap[socketNum]

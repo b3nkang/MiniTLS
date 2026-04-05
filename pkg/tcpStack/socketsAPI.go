@@ -17,7 +17,10 @@ func InitTCPStack(ipStack *ipStack.IPStack) *TCPStack {
 	tcp := &TCPStack{
 		socketTable: table,
 		ipStack: ipStack,
+		sendRequests: make(chan *SendRequest, 100),
 	}
+	go tcp.sendPacketsOut()
+	/* make a loop that sends packets out as they come in */
 	return tcp
 }
 
@@ -94,11 +97,16 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
 	/* make sure we increment table's next port! */
     table.nextID++
     table.socketMap[entry.socketID] = entry
+	
+	/* set the function to send packets here while we have access to tcp stack -- conn will not when it's trying to send */
+	entry.sendPacketFunc = func(sendReq *SendRequest) {
+		tcp.sendRequests <- sendReq
+	}
 
 	fmt.Println("[TCP] sending SYN from VConnect")
 
 	/* send SYN */
-	tcp.sendSyn(entry)
+	entry.sendSyn()
 
     // block until state changes
     for {
@@ -122,6 +130,7 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 	buf := conn.sendBuf
 
 	/* write data to buffer--only as much as fits */
+	/* TODO: CHANGE THIS FOR CIRCULAR BUF */
 	spaceInBuf := MAX_WIN_SIZE - (buf.lbw + 1) /* say last byte written is 0 and size is 5: 5-0 = 5 but we want 4 so (lbw + 1) */
 	if spaceInBuf <= 0 {
 		fmt.Println("No space in buffer. Returning for now...eventually deal with this")
@@ -137,7 +146,11 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 	/* write bytes to buffer */
 	/* NOTE: when we switch to circular buffer, we cannot do this--need a loop to write one byte at a time -- should 
 		just make that a function of the circular buffer struct though */
-	copy(buf.buf[buf.lbw + 1:], data[:numBytesToWrite])
+	
+	start := int(buf.lbw + 1 - buf.base)
+	copy(buf.buf[start:], data[:numBytesToWrite])
+	/* update lbw */
+	buf.lbw += uint32(numBytesToWrite) /* TODO: update with circular buffer */
 
 	/* tell sending thread we put stuff in buffer 
 		apparently (according to chat, we want this kinda weird structure)
@@ -155,7 +168,7 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 	return numBytesToWrite, nil
 }
 
-// TODO: returning numBytesRead for now but check if right
+// TODO: returning numBytesRead for now but check if right -- that is right
 func (conn *VTCPConn) VRead(buf []byte) (int, error) {
     // block tiill data
     data := <-conn.recvBuf.dataToRead
@@ -163,8 +176,9 @@ func (conn *VTCPConn) VRead(buf []byte) (int, error) {
     conn.recvBuf.mu.Lock()
     defer conn.recvBuf.mu.Unlock()
 
+	/* don't need to check length here because will be coming from constrained recv buf */
     numBytesRead := copy(buf, data)
-    conn.recvBuf.lbr += uint32(numBytesRead)
+    conn.recvBuf.lbr += uint32(numBytesRead) /* TODO: update with ciruclar buffer */
     conn.recvBuf.currSize -= uint32(numBytesRead)
 
     return numBytesRead, nil

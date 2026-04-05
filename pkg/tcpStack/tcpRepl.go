@@ -135,7 +135,7 @@ func (tcp *TCPStack) sCommand(socketNum int, data []byte) {
 		fmt.Printf("%d bytes written to socket %d\n", bytesWritten, socketNum)
 		return
 	} else {
-		fmt.Printf("Error with VWrite: %s", err.Error())
+		fmt.Printf("Error with VWrite: %s", err)
 		return
 	}
 }

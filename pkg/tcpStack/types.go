@@ -6,35 +6,6 @@ import (
 	"sync"
 )
 
-
-type SendBuf struct {
-	buf []byte 		/* simple normal array for now */
-	currSize int	/* curr amt of data in buf */	
-
-	mu sync.Mutex 	/* mutex for buffer */
-
-	/* pointers */
-	nxt uint32 				/* nxt byte to send */
-	lbw uint32 				/* last byte written to buf (from app) */
-	// una uint32			/* earliest-sent, but still un-ACKed byte */ //maybe use later?
-
-	/* channels */
-	dataWrittenToBuf chan struct{} 	/* tells thread that VWrite wrote data to buffer, tragically cannot pass straight bytes because VWrite needs to know num bytes written */
-}
-
-type RecvBuf struct {
-	buf []byte		/* simple normal array for now */
-	currSize int	/* curr amt of data in buf */	
-
-	/* pointers */
-	lbr uint32		/* last byte read (next byte that gets read when app calls read) */
-	nxt uint32		/* next sequence num expected */
-
-	/* channels */
-	dataToRead chan []byte 	/* VRead called -- we give them data through this chan */
-}
-
-
 /* Represent states
 iota = use increasing numbers */
 const (
@@ -111,6 +82,32 @@ type VTCPConn struct {
 	// 	- retransmission queue (later) (could also go in Conn) (will require third thread)
 }
 
+type SendBuf struct {
+	buf []byte 		/* simple normal array for now */
+	currSize int	/* curr amt of data in buf */	
+
+	mu sync.Mutex 	/* mutex for buffer */
+
+	/* pointers */
+	nxt uint32 				/* nxt byte to send */
+	lbw uint32 				/* last byte written to buf (from app) */
+	// una uint32			/* earliest-sent, but still un-ACKed byte */ //maybe use later?
+
+	/* channels */
+	dataWrittenToBuf chan struct{} 	/* tells thread that VWrite wrote data to buffer, tragically cannot pass straight bytes because VWrite needs to know num bytes written */
+}
+
+type RecvBuf struct {
+	buf []byte		/* simple normal array for now */
+	currSize int	/* curr amt of data in buf */	
+
+	/* pointers */
+	lbr uint32		/* last byte read (next byte that gets read when app calls read) */
+	nxt uint32		/* next sequence num expected */
+
+	/* channels */
+	dataToRead chan []byte 	/* VRead called -- we give them data through this chan */
+}
 
 
 

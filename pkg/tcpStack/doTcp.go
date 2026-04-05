@@ -4,16 +4,16 @@ package tcpstack
 
 NEXT STEPS:
 
-ISABELLE 4/4 @7:35PM
-	- made preliminary send and recv buf structures
-	- wrote method to init them and called before returning from VConnect and VAccept (called in handleSynAck and handleAck)
-	- wrote VWRite
-	- wrote handleSCommand and REPL stuff to handle and call VWrite (assuming NO circular buffer)
+To Do after Isabelle 4/5 @6:35PM
+	- deal with OOB error on receiver 
+	- write function that will be run in own thread for receiving data
+		- called in initBufs "go entry.receiveLoop()" or something
+		- reference sendLoop()
+		- call sendAck from here when we get a payload
+		- this will also deal with early arrivals eventually
+	- write handleAck
 
-1. set up buffer data structures in Conn after handshake completes
-	- simple array for now
-	- with pointers
-	- plus send/receive threads
+
 2. VWrite and VRead (basic)
 	- VWrite: pass bytes through channel to send thread
 3. Sending
@@ -214,6 +214,7 @@ func (entry *SocketTableEntry) initBufs(seqNum uint32) {
 
 	/* start threads for sending and receiving */
 	go entry.sendLoop()
+
 }
 
 // ----------- buffer logic ------------

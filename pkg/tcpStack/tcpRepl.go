@@ -69,6 +69,22 @@ func (tcp *TCPStack) HandleREPLCommands() {
 				continue
 			}
 			go tcp.sCommand(sID, []byte(parts[2]))
+		case "r":
+			if len(parts) != 3 {
+				fmt.Println("Usage: r <socketID> <numbytes>")
+				continue
+			}
+			sID, err := strconv.Atoi(parts[1])
+			if err != nil {
+				fmt.Println("Socket ID must be an integer")
+				continue
+			}
+			numBytes, err := strconv.Atoi(parts[2])
+			if err != nil {
+				fmt.Println("numbytes must be an integer")
+				continue
+			}
+			go tcp.rCommand(sID, numBytes)
 		case "ls":
 			tcp.socketTable.listSockets()
 		default:
@@ -138,6 +154,34 @@ func (tcp *TCPStack) sCommand(socketNum int, data []byte) {
 		fmt.Printf("Error with VWrite: %s", err)
 		return
 	}
+}
+
+func (tcp *TCPStack) rCommand(socketNum int, numBytes int) {
+    tcp.socketTable.mu.Lock()
+    socket, exists := tcp.socketTable.socketMap[socketNum]
+    tcp.socketTable.mu.Unlock()
+
+    if !exists {
+        fmt.Println("Invalid socket ID number")
+        return
+    }
+    if socket.normalSocket == nil {
+        fmt.Println("Socket is not a normal socket")
+        return
+    }
+    if socket.state != ESTABLISHED {
+        fmt.Printf("Connection with socket %d not ESTABLISHED\n", socketNum)
+        return
+    }
+
+    buf := make([]byte, numBytes)
+    bytesCopied, err := socket.normalSocket.VRead(buf)
+    if err != nil {
+        fmt.Printf("VRead error: %s\n", err)
+        return
+    }
+
+    fmt.Printf("Read %d bytes: %s\n", bytesCopied, string(buf[:bytesCopied]))
 }
 
 /* list socket table */

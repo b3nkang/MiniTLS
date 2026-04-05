@@ -84,7 +84,7 @@ type VTCPConn struct {
 
 type SendBuf struct {
 	buf []byte 		/* simple normal array for now */
-	currSize int	/* curr amt of data in buf */	
+	currSize uint32	/* curr amt of data in buf */	
 
 	mu sync.Mutex 	/* mutex for buffer */
 
@@ -99,7 +99,9 @@ type SendBuf struct {
 
 type RecvBuf struct {
 	buf []byte		/* simple normal array for now */
-	currSize int	/* curr amt of data in buf */	
+	currSize uint32	/* curr amt of data in buf */
+
+	mu sync.Mutex 	/* mutex between incoming packet logic and vread */
 
 	/* pointers */
 	lbr uint32		/* last byte read (next byte that gets read when app calls read) */

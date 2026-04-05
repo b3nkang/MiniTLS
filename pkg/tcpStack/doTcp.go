@@ -77,10 +77,24 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 		return
 	case SYN_RECEIVED:
 		fmt.Println("[TCP] handler received packet in state SYN-RECEIVED -> handling ACK")
-		tcp.handleAck(socketEntry, tcpHdr)
+		tcp.handleAckHandshake(socketEntry, tcpHdr)
 	case SYN_SENT:
 		fmt.Println("[TCP] handler received packet in state SYN-SENT -> handling SYN-ACK")
 		tcp.handleSynAck(socketEntry, tcpHdr)
+	case ESTABLISHED:
+		fmt.Println("[TCP] handler received packet in state ESTABLISHED -> handling flags and/or payload")
+		if hdr.Flags & header.TCPFlagFin != 0 {
+			// TODO: handle for teardowmn
+		}
+		if hdr.Flags & header.TCPFlagRst != 0 {
+			// TODO: handle at some point after mstone2
+		}
+		// note - may be other flags to handle in this case, to add if so
+		if len(payload) < 1 {
+			// empty payload with nothing, drop
+			return
+		}
+		tcp.handlePayload(socketEntry, tcpHdr, payload) // put into recvBuf and handle all effects
 	default:
 		fmt.Printf("No known state that matches: %d\n", socketEntry.state)
 	}
@@ -170,3 +184,42 @@ func (conn *VTCPConn) initBufs() {
 
 	/* start threads for sending and receiving */
 }
+
+// ----------- buffer logic ------------
+
+func (tcp *TCPStack) handlePayload(tableEntry *SocketTableEntry, tcpHeader header.TCPFields, payload []byte) error {
+	// prior logic already handles empty payloads, assume len(payload) > 0
+	recvBuf := tableEntry.normalSocket.recvBuf
+	payLen := uint32(len(payload))
+
+	// TODO: update, currently we assume this is inorder and not going to wrap
+	recvBuf.mu.Lock()
+	copy(recvBuf.buf[recvBuf.nxt:recvBuf.nxt+payLen],payload[:payLen])
+	recvBuf.currSize += payLen // no check for exceeding bufsize bc sender won't send exceeding since sender-side logic handles
+	recvBuf.dataToRead <- recvBuf.buf[recvBuf.nxt:recvBuf.nxt+payLen]
+	activeUpdatedSeqNum := tcpHeader.SeqNum+payLen
+	recvBuf.mu.Unlock()
+
+	tcp.sendPureAck(tableEntry,activeUpdatedSeqNum)
+	return nil
+}
+
+// send "pure" ack, i.e. no payload, passive side sends
+func (tcp *TCPStack) sendPureAck(tableEntry *SocketTableEntry, activeUpdatedSeqNum uint32) error {
+	tcpHdr := &header.TCPFields{
+		SrcPort:       tableEntry.localPort, // TODO: verify
+		DstPort:       tableEntry.destPort,
+		SeqNum:        tableEntry.seqNum,
+		AckNum:        activeUpdatedSeqNum,
+		DataOffset:    20,
+		Flags:         header.TCPFlagAck,
+		WindowSize:    uint16(MAX_WIN_SIZE - tableEntry.normalSocket.recvBuf.currSize),
+		Checksum:      0,
+		UrgentPointer: 0,
+	}
+
+	/* send using sendTCP */
+	tcp.sendTCP(tcpHdr, tableEntry.localIP, tableEntry.destIP, make([]byte, 0))
+	return nil
+}
+

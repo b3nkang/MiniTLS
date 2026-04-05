@@ -155,6 +155,21 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 	return numBytesToWrite, nil
 }
 
+// TODO: returning numBytesRead for now but check if right
+func (conn *VTCPConn) VRead(buf []byte) (int, error) {
+    // block tiill data
+    data := <-conn.recvBuf.dataToRead
+
+    conn.recvBuf.mu.Lock()
+    defer conn.recvBuf.mu.Unlock()
+
+    numBytesRead := copy(buf, data)
+    conn.recvBuf.lbr += uint32(numBytesRead)
+    conn.recvBuf.currSize -= uint32(numBytesRead)
+
+    return numBytesRead, nil
+}
+
 /* verify that random port doesn't conflict with existing connection in table */
 func (table *SocketTable) portIsUnique(newPort uint16) bool {
 	for _, entry := range table.socketMap {

@@ -76,7 +76,7 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 		normalSocket: conn,
 		listenSocket: listener,
 		socketID: table.nextID,
-		seqNum: utils.GenerateNewSeq(), /* generate random sequence number here for starting */
+		seqNum: utils.GenerateNewSeq(), /* generate random sequence number here for starting -- PASSIVE SIDE*/
 	}
 
 	/* set the function here while we have access to tcp stack -- conn will not when it's trying to send */
@@ -88,18 +88,18 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 	table.socketMap[entry.socketID] = entry
 
 	table.mu.Unlock() /* UNLOCK MUTEX BEFORE SENDING SYNACK */
-	entry.sendSynAck(tcpHeader.SeqNum)
+	entry.sendSynAck(tcpHeader.SeqNum) /* pass in OTHER SIDE'S sequence num */
 }
 
 
 /* send SYN-ACK (second part of 3-way handshake) */
-func (entry *SocketTableEntry) sendSynAck(synSeq uint32) error {
+func (entry *SocketTableEntry) sendSynAck(otherSideSeq uint32) error {
 	/* make TCP header */
 	tcpHdr := &header.TCPFields{
-		SrcPort:       entry.localPort, 	// TODO: from Ben - it is too early in the morning for me to think so 
-		DstPort:       entry.destPort,		// 		 i may be tripping but this looks sus to me, do we need to flip these
-		SeqNum:        entry.seqNum,		//	     i will revisit this some other time when i am clear minded
-		AckNum:        synSeq+1, 	/* Ack should be whatever we got from SYN + 1 */
+		SrcPort:       entry.localPort, 	
+		DstPort:       entry.destPort,		
+		SeqNum:        entry.seqNum,		/* our randomly generated sequence num */
+		AckNum:        otherSideSeq+1, 		/* Ack should be whatever we got from SYN + 1 */
 		DataOffset:    20, 			
 		Flags:         header.TCPFlagSyn | header.TCPFlagAck,
 		WindowSize:    65535,
@@ -134,19 +134,25 @@ func (tcp *TCPStack) handleSynAck(tableEntry *SocketTableEntry, tcpHeader header
 	table.mu.Lock()
 
 	// verify ack has been updated correctly
-	if tcpHeader.AckNum != tableEntry.seqNum+1 {
+	if tcpHeader.AckNum != tableEntry.seqNum+1 { /* ackNum should be OUR sequence number + 1*/
 		table.mu.Unlock()
 		tableEntry.establishedChan <- ERROR // unblock vconnect
-		return fmt.Errorf("AckNum does not match SeqNum; %d != %d", tcpHeader.AckNum, tableEntry.seqNum+1)
+		return fmt.Errorf("AckNum does not match SeqNum+1; %d != %d", tcpHeader.AckNum, tableEntry.seqNum+1)
 	}
 
-	tableEntry.seqNum = tcpHeader.AckNum
-	tableEntry.lastKnownAck = tcpHeader.AckNum
+	tableEntry.seqNum = tcpHeader.AckNum /* we know AckNum = seqNum +1, so update here */
+	tableEntry.lastKnownAck = tcpHeader.AckNum /* last seq we KNOW was received by receiver */
 	tableEntry.state = ESTABLISHED
 	table.mu.Unlock() /* UNLOCK MUTEX BEFORE CALLING SENDACK */
-	tableEntry.sendAckHandshake(tcpHeader.SeqNum)
+	tableEntry.sendAckHandshake(tcpHeader.SeqNum) /* passing in THEIR sequence num to ACK */
 	/* set up send and recv buffers for comms */
-	tableEntry.initBufs(tableEntry.seqNum)
+
+	/* sets our send buffers with this seq num--same one we use for sending Ack AND first
+	data because first Ack does not take up a seqNum 
+	/* passing in THEIR (sequence num + 1) for recv buf init 
+		this is the same number we use for ACK because it is the next sequence number
+		we expect, so should also be what we use to initially set recv.NXT */
+	tableEntry.initBufs(tcpHeader.SeqNum + 1) 
 	
 	tableEntry.establishedChan <- tableEntry.state // unblock vconnnect
 	return nil
@@ -200,7 +206,8 @@ func (tcp *TCPStack) handleAckHandshake(tableEntry *SocketTableEntry, tcpHeader 
 	tableEntry.lastKnownAck = tcpHeader.AckNum
 
 	/* init send/recv bufs before returning */
-	tableEntry.initBufs(tableEntry.seqNum)
+	/* pass in OTHER SIDE'S SEQ NUM for recv buffer -> next expected seqNum = same seqNum from ACK */
+	tableEntry.initBufs(tcpHeader.SeqNum)
 
 	// TODO: init min heap here for early arrivals
 

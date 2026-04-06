@@ -124,7 +124,7 @@ type RecvBuf struct {
 	nxt uint32		/* next sequence num expected */
 
 	/* channels */
-	dataToRead chan []byte 	/* VRead called -- we give them data through this chan */
+	dataToRead chan struct {}
 }
 
 

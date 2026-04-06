@@ -47,8 +47,8 @@ func (tcp *TCPStack) VListen(port uint16) (*VTCPListener, error) {
 	tcp.socketTable.nextID++
 	/* add this entry to table */
 	tcp.socketTable.socketMap[tableEntry.socketID] = tableEntry
-	fmt.Printf("Made a new entry and listener socket in host's socket table with: \n Port: %d\nState: %d\nSocketID: %d\n",
-				tableEntry.localPort, tableEntry.state, tableEntry.socketID)
+	fmt.Printf("Listening on Port: %d, SocketID: %d\n",
+				tableEntry.localPort, tableEntry.socketID)
 	tcp.socketTable.listSockets()
 	return listener, nil
 }
@@ -77,7 +77,6 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
 			break
 		}
 	}
-	fmt.Printf("[TCP] Port generated in VConnect: %d\n", srcPort)
 	/* get this conn's local IP (just going to use if0?) */
 	localInterface := tcp.ipStack.Interfaces["if0"]
 	localIP := localInterface.IP
@@ -146,11 +145,17 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 	/* write bytes to buffer */
 	/* NOTE: when we switch to circular buffer, we cannot do this--need a loop to write one byte at a time -- should 
 		just make that a function of the circular buffer struct though */
+
+	fmt.Printf("Size of send buf before write: %d\n", buf.currSize)
 	
 	start := int(buf.lbw + 1 - buf.base)
 	copy(buf.buf[start:], data[:numBytesToWrite])
 	/* update lbw */
 	buf.lbw += uint32(numBytesToWrite) /* TODO: update with circular buffer */
+	buf.currSize += uint32(numBytesToWrite)
+
+	fmt.Printf("Size of send buf ater write: %d\n", buf.currSize)
+	fmt.Printf("Data written to send buf: %q\n", buf.buf[start:start+numBytesToWrite])
 
 	/* tell sending thread we put stuff in buffer 
 		apparently (according to chat, we want this kinda weird structure)
@@ -170,19 +175,32 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 
 // TODO: returning numBytesRead for now but check if right -- that is right
 func (conn *VTCPConn) VRead(buf []byte) (int, error) {
-    // block tiill data
-    data := <-conn.recvBuf.dataToRead
+	/* loop so that we block until data is ready */
+    for {
+		/* lock mutex before accessing fields */
+        conn.recvBuf.mu.Lock()
+		/* if current size == 0, no new data in buffer, need to wait for signal to read */
+        if conn.recvBuf.currSize == 0 {
+            conn.recvBuf.mu.Unlock()
+            <-conn.recvBuf.dataToRead  /* wait for signal that new data exists */
+            continue
+        }
+        /* otherwise, we know there is data ready and we can just read it */
 
-    conn.recvBuf.mu.Lock()
-    defer conn.recvBuf.mu.Unlock()
+		/* find place to read from: last byte read - base + 1 */
+		readStart := conn.recvBuf.lbr - conn.recvBuf.base + 1
+		/* copy to passed in buffer */
+		numBytesRead := copy(buf, conn.recvBuf.buf[readStart:readStart+conn.recvBuf.currSize])
+		/* update lbr */
+		conn.recvBuf.lbr += uint32(numBytesRead)
+		/* decrease current size (more important for circular buffer */
+		conn.recvBuf.currSize -= uint32(numBytesRead)
 
-	/* don't need to check length here because will be coming from constrained recv buf */
-    numBytesRead := copy(buf, data)
-    conn.recvBuf.lbr += uint32(numBytesRead) /* TODO: update with ciruclar buffer */
-    conn.recvBuf.currSize -= uint32(numBytesRead)
-
-    return numBytesRead, nil
+        conn.recvBuf.mu.Unlock()
+        return numBytesRead, nil
+    }
 }
+
 
 /* verify that random port doesn't conflict with existing connection in table */
 func (table *SocketTable) portIsUnique(newPort uint16) bool {

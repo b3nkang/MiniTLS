@@ -4,25 +4,36 @@ package tcpstack
 
 NEXT STEPS:
 
-To Do after Isabelle 4/5 @6:35PM
-	- deal with OOB error on receiver 
-	- write function that will be run in own thread for receiving data
-		- called in initBufs "go entry.receiveLoop()" or something
-		- reference sendLoop()
-		- call sendAck from here when we get a payload
-		- this will also deal with early arrivals eventually
-	- write handleAck
+Things Isabele Did Today (4/6 before 5:00pm):
+	- got send working with correct indices (fixed InitBuf method)
+		- some other small bug fixes to do this but I lowkey forgot--mostly indexing
+			stuff and accessing the buffer
+		- good thing to remember: pointers in the buffer refer to SEQUENCE NUMS, not indices.
+			to get indices (for now) subtract the base pointer (eventually will change due to circular
+				buffer but we'll write methods to do that)
+	- switched the channel in Receive buffer to be a signal channel, not data
+		- because HandlePayload was blocking on sending received data to the data channel
+				but if no one had called VRead, we don't want them to block
+		- so now VRead will have to adjust pointers in the buffer (just like VWrite) and
+				take on a bit more responsibility
+	- send is now working repeatedly and from both sides
+		- sequence nums from send side should be updating correctly (didn't look in wireshark tho)
+		- things in recv buf should be updating correctly too
+	- VRead was very wrong...needed a loop (so that it blocks until data is ready)
+		- also needs to check CurrSize and not just signal--signal is only for NEW data but if
+				it just wants to read old data, then it doesn't need a signal to look
 
+Next steps after what Isabelle did today:
 
-2. VWrite and VRead (basic)
-	- VWrite: pass bytes through channel to send thread
-3. Sending
-	- load bytes into buffer
-	- send segments
 4. Receiving
-	- add case for handling basic ACK
-	- pass ACK to receiving thread
-	- passing information from ACK to sending thread (? or any way to deal with this)
+	- I think Acks are being sent but not sure if they're correct--verify that
+		- write method to handle ack and then do the things below
+	- passing information from ACK to sending thread
+		- sending thread needs to know window size and keep track of data IN FLIGHT and
+			compare those numbers before sending new data
+		- we aren't doing this at all yet
+5. Circular buffer
+	- Make a circular buffer struct that has methods for indexing, etc and add to send & recv buf
 
 - don't worry about early arrivals initially (just ignore if wrong sequence num)
 - refactor handshake methods into separate file
@@ -51,7 +62,7 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 	fmt.Println("[TCP] HandleTCP called, parsing and validating TCP message")
 
 	/* 1. parse TCP header and extract message body */
-	tcpHdr, _, err := utils.ParseAndValidateTCP(hdr, payload) // TODO: re-add tcpData when we need. Its "_" right now because no use, so to turn off compiler warning
+	tcpHdr, tcpPayload, err := utils.ParseAndValidateTCP(hdr, payload) // TODO: re-add tcpData when we need. Its "_" right now because no use, so to turn off compiler warning
 	if err != nil {
 		/* checksum failed */
 		fmt.Printf("Error: %s\n", err.Error())
@@ -65,7 +76,7 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 		fmt.Printf("Src Port: %s\nSrc IP: %s\n Dest Port: %s\n Dest IP: %s\n", string(tcpHdr.SrcPort), hdr.Src.String(), string(tcpHdr.DstPort), hdr.Dst.String())
 	} 
 	
-	PrintSocketTableEntry(socketEntry)
+	// PrintSocketTableEntry(socketEntry)
 
 	/* 3. act differently based on state of that conn in our table */
 	switch socketEntry.state {
@@ -90,11 +101,11 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 			// TODO: handle at some point after mstone2
 		}
 		// note - may be other flags to handle in this case, to add if so
-		if len(payload) < 1 {
+		if len(tcpPayload) < 1 {
 			// empty payload with nothing, drop
 			return
 		}
-		socketEntry.handlePayload(tcpHdr, payload) // put into recvBuf and handle all effects
+		socketEntry.handlePayload(tcpHdr, tcpPayload) // put into recvBuf and handle all effects
 	default:
 		fmt.Printf("No known state that matches: %d\n", socketEntry.state)
 	}
@@ -177,7 +188,7 @@ func (tcp *TCPStack) sendTCP(sendReq *SendRequest) {
 }
 
 /* initialize send and receive buffers in Conn obj */
-func (entry *SocketTableEntry) initBufs(seqNum uint32) {
+func (entry *SocketTableEntry) initBufs(otherSideSeq uint32) {
 	sendBuf := &SendBuf{
 		buf: make([]byte, MAX_WIN_SIZE),
 		currSize: 0,
@@ -187,22 +198,23 @@ func (entry *SocketTableEntry) initBufs(seqNum uint32) {
 	recvBuf := &RecvBuf{
 		buf: make([]byte, MAX_WIN_SIZE),
 		currSize: 0,
-		dataToRead: make(chan []byte), 
+		dataToRead: make(chan struct{}, 1), 
 	}
 
 	/* init pointers */
 	// TODO: all pointer logic below is naive and may need to be revised
+	ourSeqNum := entry.seqNum
 
-	/* send buf */
-	sendBuf.nxt = seqNum /* next sequence num to send */
-	sendBuf.lbw = seqNum-1 /* last byte written by app, next write starts at lbw+1 */
-	sendBuf.base = seqNum
+	/* send buf --uses OUR (this side's) sequence numbers */
+	sendBuf.nxt = ourSeqNum /* next sequence num to send */
+	sendBuf.lbw = ourSeqNum-1 /* last byte written by app, next write starts at lbw+1 */
+	sendBuf.base = ourSeqNum
 
-	/* recv buf */
+	/* recv buf -- uses OTHER SIDE's sequence numbers --> nxt is the next expected SEQ from THEIR SIDE */
 	// recvBuf.lbr = seqNum % MAX_WIN_SIZE  /* i think this is wrong--this treats lbr as an index */
-	recvBuf.lbr = seqNum-1 /* last SEQ NUM read by app (start next read from this + 1) */
-	recvBuf.base = seqNum
-	recvBuf.nxt = recvBuf.lbr + 1 /* next sequence num expected from sender */
+	recvBuf.lbr = otherSideSeq-1 /* last SEQ NUM read by app (start next read from this + 1) */
+	recvBuf.base = otherSideSeq
+	recvBuf.nxt = otherSideSeq /* next sequence num expected from sender */
 
 	/* idk what this is doing */
 	// if recvBuf.lbr == MAX_WIN_SIZE-1 {
@@ -235,19 +247,48 @@ RCV.NXT =< SEG.SEQ+SEG.LEN-1 < RCV.NXT+RCV.WND
 
 */
 func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload []byte) error {
+	fmt.Println("Packet being handled by receiver in handlePayload")
 	// prior logic already handles empty payloads, assume len(payload) > 0
 	recvBuf := entry.normalSocket.recvBuf
 	payLen := uint32(len(payload))
 
 	// TODO: update, currently we assume this is inorder and not going to wrap
 	recvBuf.mu.Lock()
-	copy(recvBuf.buf[recvBuf.nxt:recvBuf.nxt+payLen],payload[:payLen])
+
+	/* check that seq num is what we expect (TODO: deal with early arrivals) */
+	if tcpHeader.SeqNum != recvBuf.nxt {
+		fmt.Printf("Expected SeqNum: %d, Actual SeqNum: %d, dropping payload\n", int(recvBuf.nxt), int(tcpHeader.SeqNum))
+		recvBuf.mu.Unlock()
+		return nil
+	}
+
+	/* Now assume seqNum is what we expect: 
+		convert seq nums to indices for copy */
+	startCopy := recvBuf.nxt - recvBuf.base
+	endCopy := startCopy + payLen
+
+	/* TODO: check if there is space in buffer */
+
+	copy(recvBuf.buf[startCopy:endCopy],payload[:payLen])
 	recvBuf.currSize += payLen // no check for exceeding bufsize bc sender won't send exceeding since sender-side logic handles
+
+	fmt.Printf("state: base=%d nxt=%d lbr=%d currSize=%d payLen=%d startCopy=%d\n", recvBuf.base, recvBuf.nxt, recvBuf.lbr, recvBuf.currSize, payLen, startCopy)
+
+	/* next updated here! don't move lbr until READ() */
 	recvBuf.nxt += payLen
 	activeUpdatedSeqNum := tcpHeader.SeqNum+payLen
+
+	/* print receive buffer for debugging */
+	fmt.Printf("copied bytes: %q\n", recvBuf.buf[startCopy:endCopy])
+	endOfBuf := recvBuf.nxt - recvBuf.base
+	fmt.Printf("entire buffer [0:%d]: %q\n", endOfBuf, recvBuf.buf[:endOfBuf])
+
 	recvBuf.mu.Unlock()
 
-    recvBuf.dataToRead <- payload
+    select {
+	case recvBuf.dataToRead <- struct{}{}:
+	default:
+	}
 	entry.sendPureAck(activeUpdatedSeqNum)
 	
 	return nil
@@ -301,11 +342,17 @@ func (entry *SocketTableEntry) sendSegment(segment []byte) error {
 	/* enqueues request on tcpStack's request channel -> eventually calls SendTCP */
 	entry.sendPacketFunc(sendReq)
 
+	/* update our sequence number to reflect segment being sent */
+	entry.seqNum += uint32(len(segment))
+
 	return nil
 }
 
 
-/* thread that waits on data in the buffer and sends said data when it's there */
+/* thread that waits on data in the buffer and sends said data when it's there 
+   TODO: verify there is enough space in the buffer to send. this will rely
+   on some sort of field/data structure that DOES NOT EXIST YET -> need to 
+   know other side's window size and update it with Acks */
 func (entry *SocketTableEntry) sendLoop() {
 	conn := entry.normalSocket
 	for {
@@ -319,6 +366,15 @@ func (entry *SocketTableEntry) sendLoop() {
 		should be the segment from nxt through lbw */
 		start := int(buf.nxt - buf.base) /* next sequence num (to send) - starting sequence num */
 		end := int(buf.lbw - buf.base) /* last byte written by app - starting sequence num */
+
+
+		/* print send buffer for debugging */
+		fmt.Println("Printing send buffer contents copied before sending segment: ")
+		fmt.Printf("copied bytes: %q\n", buf.buf[start:end+1])
+		fmt.Printf("entire buffer: %q\n", buf.buf[:buf.currSize])
+
+		/* TODO: determine how much data we can send based on other side's available window */
+		/* TODO: start zero-window-probing if necessary */
 
 		/* extract data from buffer */
 		dataSize := end-start+1

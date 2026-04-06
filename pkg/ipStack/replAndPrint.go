@@ -92,7 +92,6 @@ func (stack *IPStack) HandleCommand(line string) {
 	default:
 		fmt.Println("Unknown command")
 	}
-	fmt.Printf("> ")
 }
 
 /* "LI" command */

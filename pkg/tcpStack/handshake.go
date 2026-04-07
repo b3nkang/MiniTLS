@@ -18,7 +18,7 @@ func (entry *SocketTableEntry) sendSyn() error {
 		SeqNum:        entry.seqNum,
 		DataOffset:    20, 			/* TODO: I have no idea what this is */
 		Flags:         header.TCPFlagSyn,
-		WindowSize:    65535,
+		WindowSize:    MAX_WIN_SIZE,
 		Checksum:      0,
 		UrgentPointer: 0,
 	}
@@ -102,10 +102,10 @@ func (entry *SocketTableEntry) sendSynAck(otherSideSeq uint32) error {
 		AckNum:        otherSideSeq+1, 		/* Ack should be whatever we got from SYN + 1 */
 		DataOffset:    20, 			
 		Flags:         header.TCPFlagSyn | header.TCPFlagAck,
-		WindowSize:    65535,
+		WindowSize:    MAX_WIN_SIZE,
 		Checksum:      0,
 		UrgentPointer: 0,	
-	}							// *********** TODO: later: get some nice table prints of the socketmap so we can verify stuff
+	}
 
 	/* send using sendTCP */
 	sendReq := &SendRequest{
@@ -140,20 +140,28 @@ func (tcp *TCPStack) handleSynAck(tableEntry *SocketTableEntry, tcpHeader header
 		return fmt.Errorf("AckNum does not match SeqNum+1; %d != %d", tcpHeader.AckNum, tableEntry.seqNum+1)
 	}
 
+	// update fields
 	tableEntry.seqNum = tcpHeader.AckNum /* we know AckNum = seqNum +1, so update here */
 	tableEntry.lastKnownAck = tcpHeader.AckNum /* last seq we KNOW was received by receiver */
 	tableEntry.state = ESTABLISHED
-	table.mu.Unlock() /* UNLOCK MUTEX BEFORE CALLING SENDACK */
-	tableEntry.sendAckHandshake(tcpHeader.SeqNum) /* passing in THEIR sequence num to ACK */
-	/* set up send and recv buffers for comms */
-
+	
 	/* sets our send buffers with this seq num--same one we use for sending Ack AND first
 	data because first Ack does not take up a seqNum 
 	/* passing in THEIR (sequence num + 1) for recv buf init 
 		this is the same number we use for ACK because it is the next sequence number
 		we expect, so should also be what we use to initially set recv.NXT */
+	// note per RFC - technically bufs are supposed to be init'd much earlier for coverage of weird edge cases (e.g. simulataneous open) that we don't need to worry about
 	tableEntry.initBufs(tcpHeader.SeqNum + 1) 
-	
+	// handle storing the initial max window we get for the receiver into the new sendBuf
+	sendBuf := tableEntry.normalSocket.sendBuf
+	sendBuf.mu.Lock() // don't think this is technically needed but why not
+	sendBuf.otherSideWindow = tcpHeader.WindowSize
+	sendBuf.mu.Unlock()
+
+	table.mu.Unlock() /* UNLOCK MUTEX BEFORE CALLING SENDACK */
+	tableEntry.sendAckHandshake(tcpHeader.SeqNum) /* passing in THEIR sequence num to ACK */
+	/* set up send and recv buffers for comms */
+
 	tableEntry.establishedChan <- tableEntry.state // unblock vconnnect
 	return nil
 }
@@ -166,7 +174,7 @@ func (entry *SocketTableEntry) sendAckHandshake(passiveSeqNum uint32) error {
 		AckNum:        passiveSeqNum+1, 	/* Ack should be whatever we got from SYN + 1 */
 		DataOffset:    20, 			/* TODO: same as other instances */
 		Flags:         header.TCPFlagAck,
-		WindowSize:    65535,
+		WindowSize:    MAX_WIN_SIZE,
 		Checksum:      0,
 		UrgentPointer: 0,
 	}
@@ -207,6 +215,7 @@ func (tcp *TCPStack) handleAckHandshake(tableEntry *SocketTableEntry, tcpHeader 
 
 	/* init send/recv bufs before returning */
 	/* pass in OTHER SIDE'S SEQ NUM for recv buffer -> next expected seqNum = same seqNum from ACK */
+	// note per RFC - technically bufs are supposed to be init'd much earlier for coverage of weird edge cases (e.g. simulataneous open) that we don't need to worry about
 	tableEntry.initBufs(tcpHeader.SeqNum)
 
 	// TODO: init min heap here for early arrivals

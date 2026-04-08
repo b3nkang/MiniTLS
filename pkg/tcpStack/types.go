@@ -4,6 +4,7 @@ import (
 	"ip-isabelle-and-ben/pkg/ipStack"
 	"net/netip"
 	"sync"
+
 	"github.com/google/netstack/tcpip/header"
 )
 
@@ -105,9 +106,12 @@ type SendBuf struct {
 
 	/* pointers */
 	nxt uint32 				/* nxt byte to send */
-	lbw uint32 				/* last byte written to buf (from app) */
-	// una uint32			/* earliest-sent, but still un-ACKed byte */ //maybe use later?
-
+	lbw uint32 				/* last byte written to buf (from app) */	
+	
+	// // NOTE: so I tried to make it work without UNA field and we still need a way to track bytes in flight and UNA actually does a better job than some bytesinflight var so gonna roll with UNA for now. TODO: revisit question after mstone2
+	una uint32			/* earliest-sent, but still un-ACKed byte */ //maybe use later? Ben: if we're going to enqueue in-flight with some data structure, no need TODO: revisit question after mstone2
+	otherSideWindow uint16 	/* the amount which the other's recv buf (NOT OURS, the OTHER party we are connected with) can receive. used in handlePureAck() */
+	
 	/* channels */
 	dataWrittenToBuf chan struct{} 	/* tells thread that VWrite wrote data to buffer, tragically cannot pass straight bytes because VWrite needs to know num bytes written */
 }

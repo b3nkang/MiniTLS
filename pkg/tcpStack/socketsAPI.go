@@ -126,16 +126,21 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 	conn.sendBuf.mu.Lock()
 	defer conn.sendBuf.mu.Unlock()
 
-	buf := conn.sendBuf
+	sendBuf := conn.sendBuf
 
 	/* write data to buffer--only as much as fits */
-	/* TODO: CHANGE THIS FOR CIRCULAR BUF */
-	spaceInBuf := MAX_WIN_SIZE - (buf.lbw + 1) /* say last byte written is 0 and size is 5: 5-0 = 5 but we want 4 so (lbw + 1) */
-	if spaceInBuf <= 0 {
-		fmt.Println("No space in buffer. Returning for now...eventually deal with this")
+	// /* TODO: CHANGE THIS FOR CIRCULAR BUF */
+	// spaceInBuf := MAX_WIN_SIZE - (buf.lbw + 1) /* say last byte written is 0 and size is 5: 5-0 = 5 but we want 4 so (lbw + 1) */
+	// if spaceInBuf <= 0 {
+	// 	fmt.Println("No space in buffer. Returning for now...eventually deal with this")
+	// 	return 0, nil
+	// }
+	spaceInBuf := sendBuf.cBuf.FreeSpace()
+	if spaceInBuf == 0 {
+		fmt.Println("[TCP - VWrite] no space in send buffer")
 		return 0, nil
 	}
-
+	
 	/* truncate bytes to fit in buffer if necessary */
 	numBytesToWrite := len(data)
 	if numBytesToWrite > int(spaceInBuf) {
@@ -146,16 +151,20 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 	/* NOTE: when we switch to circular buffer, we cannot do this--need a loop to write one byte at a time -- should 
 		just make that a function of the circular buffer struct though */
 
-	fmt.Printf("Size of send buf before write: %d\n", buf.currSize)
-	
-	start := int(buf.lbw + 1 - buf.base)
-	copy(buf.buf[start:], data[:numBytesToWrite])
-	/* update lbw */
-	buf.lbw += uint32(numBytesToWrite) /* TODO: update with circular buffer */
-	buf.currSize += uint32(numBytesToWrite)
+	fmt.Printf("[TCP - VWrite] send buf size before write: %d\n", sendBuf.cBuf.currSize)
+		
+	// // // Old pre-circbuf
+	// // start := int(buf.lbw + 1 - buf.base)
+	// // copy(buf.buf[start:], data[:numBytesToWrite])
+	// // buf.currSize += uint32(numBytesToWrite)
+	// /* update lbw */
+	// buf.lbw += uint32(numBytesToWrite) /* TODO: update with circular buffer */
+	sendBuf.cBuf.WriteIntoBuf(sendBuf.lbw+1, data[:numBytesToWrite])
+	start:= sendBuf.lbw+1
+	sendBuf.lbw += uint32(numBytesToWrite)
 
-	fmt.Printf("Size of send buf ater write: %d\n", buf.currSize)
-	fmt.Printf("Data written to send buf: %q\n", buf.buf[start:start+numBytesToWrite])
+	fmt.Printf("[TCP - VWrite] send buf size after write: %d\n",sendBuf.cBuf.currSize)
+	fmt.Printf("[TCP - VWrite] data written to send buf: %q\n",sendBuf.cBuf.SliceFrom(start, uint32(numBytesToWrite)))
 
 	/* tell sending thread we put stuff in buffer 
 		apparently (according to chat, we want this kinda weird structure)
@@ -166,7 +175,7 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 		if the channel is full, the sender will check the buffer anyway and our data will be sent.
 		at least that's the idea...? */
 	select {
-	case buf.dataWrittenToBuf <- struct{}{}:
+	case sendBuf.dataWrittenToBuf <- struct{}{}:
 	default:
 	}
 
@@ -180,21 +189,30 @@ func (conn *VTCPConn) VRead(buf []byte) (int, error) {
 		/* lock mutex before accessing fields */
         conn.recvBuf.mu.Lock()
 		/* if current size == 0, no new data in buffer, need to wait for signal to read */
-        if conn.recvBuf.currSize == 0 {
+        if conn.recvBuf.cBuf.currSize == 0 {
             conn.recvBuf.mu.Unlock()
             <-conn.recvBuf.dataToRead  /* wait for signal that new data exists */
             continue
         }
         /* otherwise, we know there is data ready and we can just read it */
+		numBytesToRead := len(buf)
+		if numBytesToRead > int(conn.recvBuf.cBuf.currSize) {
+			numBytesToRead = int(conn.recvBuf.cBuf.currSize)
+		}
 
-		/* find place to read from: last byte read - base + 1 */
-		readStart := conn.recvBuf.lbr - conn.recvBuf.base + 1
-		/* copy to passed in buffer */
-		numBytesRead := copy(buf, conn.recvBuf.buf[readStart:readStart+conn.recvBuf.currSize])
-		/* update lbr */
+		numBytesRead := conn.recvBuf.cBuf.ReadFromBuf(conn.recvBuf.lbr+1, buf, uint32(numBytesToRead))
 		conn.recvBuf.lbr += uint32(numBytesRead)
-		/* decrease current size (more important for circular buffer */
-		conn.recvBuf.currSize -= uint32(numBytesRead)
+		conn.recvBuf.cBuf.AdvanceBase(uint32(numBytesRead))
+
+		// // old pre-circbuf
+		// /* find place to read from: last byte read - base + 1 */
+		// readStart := conn.recvBuf.lbr - conn.recvBuf.base + 1
+		// /* copy to passed in buffer */
+		// numBytesRead := copy(buf, conn.recvBuf.buf[readStart:readStart+conn.recvBuf.currSize])
+		// /* update lbr */
+		// conn.recvBuf.lbr += uint32(numBytesRead)
+		// /* decrease current size (more important for circular buffer */
+		// conn.recvBuf.currSize -= uint32(numBytesRead)
 
         conn.recvBuf.mu.Unlock()
         return numBytesRead, nil

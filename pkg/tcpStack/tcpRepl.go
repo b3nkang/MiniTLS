@@ -307,6 +307,8 @@ func (tcp *TCPStack) getNormalSocket(socketNum int) (*VTCPConn) {
 	return socket.normalSocket
 }
 
+// NOTE: these no longer work, was for testing with simple arrays
+
 func (tcp *TCPStack) pSendBuf(socketNum int) {
 	socket := tcp.getNormalSocket(socketNum)
 	if socket == nil {
@@ -317,7 +319,7 @@ func (tcp *TCPStack) pSendBuf(socketNum int) {
 	sendBuf.mu.Lock()
 	defer sendBuf.mu.Unlock()
 
-	printBufferWithPointers(sendBuf.buf, sendBuf.base, 10, []BufPointer{
+	printBufferWithPointers(sendBuf.cBuf.buf, sendBuf.base, 10, []BufPointer{
 		{seq: sendBuf.una, mark: "U"},
 		{seq: sendBuf.nxt, mark: "N"},
 		{seq: sendBuf.lbw, mark: "L"},
@@ -334,7 +336,7 @@ func (tcp *TCPStack) pRecvBuf(socketNum int) {
 	recvBuf.mu.Lock()
 	defer recvBuf.mu.Unlock()
 
-	printBufferWithPointers(recvBuf.buf, recvBuf.base, 10, []BufPointer{
+	printBufferWithPointers(recvBuf.cBuf.buf, recvBuf.cBuf.baseSeq, 10, []BufPointer{
 		{seq: recvBuf.lbr, mark: "R"},
 		{seq: recvBuf.nxt, mark: "N"},
 	})

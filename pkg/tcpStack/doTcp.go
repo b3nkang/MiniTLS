@@ -42,6 +42,7 @@ Next steps after what Isabelle did today:
 NOTES:
 - per RFC: default MSS is 536 (max segment size) // TODO: i'm not enforcing this yet, should we? -ben
 
+// TODO: small, refactor tcpHeader = SEGheader or something to make things much less confusing
 // TODO: low prio/long term, look into if seqNum field is even necessary in table entry. may not be
 
 */
@@ -199,15 +200,26 @@ func (tcp *TCPStack) sendTCP(sendReq *SendRequest) {
 
 /* initialize send and receive buffers in Conn obj */
 func (entry *SocketTableEntry) initBufs(otherSideSeq uint32) {
-	sendBuf := &SendBuf{
-		buf: make([]byte, MAX_WIN_SIZE),
-		currSize: 0,
-		dataWrittenToBuf: make(chan struct{}, 1), /* may be better to switch to signal channel and have VWrite write directly to buffer (with mutex) */
-	}
+	// sendBuf := &SendBuf{
+	// 	buf: make([]byte, MAX_WIN_SIZE),
+	// 	currSize: 0,
+	// 	dataWrittenToBuf: make(chan struct{}, 1), /* may be better to switch to signal channel and have VWrite write directly to buffer (with mutex) */
+	// }
 
+	// recvBuf := &RecvBuf{
+	// 	buf: make([]byte, MAX_WIN_SIZE),
+	// 	currSize: 0,
+	// 	dataToRead: make(chan struct{}, 1), 
+	// }
+
+	sendCBuf := NewCircleBuf(MAX_WIN_SIZE, entry.seqNum)
+	sendBuf := &SendBuf{
+		cBuf: sendCBuf,
+		dataWrittenToBuf: make(chan struct{}, 1),
+	}
+	recvCBuf := NewCircleBuf(MAX_WIN_SIZE, otherSideSeq)
 	recvBuf := &RecvBuf{
-		buf: make([]byte, MAX_WIN_SIZE),
-		currSize: 0,
+		cBuf: recvCBuf,
 		dataToRead: make(chan struct{}, 1), 
 	}
 
@@ -219,18 +231,11 @@ func (entry *SocketTableEntry) initBufs(otherSideSeq uint32) {
 	sendBuf.una = ourSeqNum // keep for now until end of mstone2. see UNA field in types for reasoning. TODO: verify if needed after mstone2
 	sendBuf.nxt = ourSeqNum /* next sequence num to send */
 	sendBuf.lbw = ourSeqNum-1 /* last byte written by app, next write starts at lbw+1 */
-	sendBuf.base = ourSeqNum
 
 	/* recv buf -- uses OTHER SIDE's sequence numbers --> nxt is the next expected SEQ from THEIR SIDE */
-	// recvBuf.lbr = seqNum % MAX_WIN_SIZE  /* i think this is wrong--this treats lbr as an index */
 	recvBuf.lbr = otherSideSeq-1 /* last SEQ NUM read by app (start next read from this + 1) */
-	recvBuf.base = otherSideSeq
 	recvBuf.nxt = otherSideSeq /* next sequence num expected from sender */
 
-	/* idk what this is doing */
-	// if recvBuf.lbr == MAX_WIN_SIZE-1 {
-	// 	recvBuf.nxt = 0
-	// }
 	conn := entry.normalSocket
 	conn.sendBuf = sendBuf
 	conn.recvBuf = recvBuf
@@ -274,26 +279,38 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 		return nil
 	}
 
-	/* Now assume seqNum is what we expect: 
-		convert seq nums to indices for copy */
-	startCopy := recvBuf.nxt - recvBuf.base
-	endCopy := startCopy + payLen
+	// // OLD -- pre circbuf
 
-	/* TODO: check if there is space in buffer */
+	// /* Now assume seqNum is what we expect: 
+	// 	convert seq nums to indices for copy */
+	// startCopy := recvBuf.nxt - recvBuf.base
+	// endCopy := startCopy + payLen
 
-	copy(recvBuf.buf[startCopy:endCopy],payload[:payLen])
-	recvBuf.currSize += payLen // no check for exceeding bufsize bc sender won't send exceeding since sender-side logic handles
+	/* TODO: check if there is space in buffer ----> replied below -Ben */
+	// note: as below, no check for exceeding bufsize bc sender won't send exceeding since sender-side logic handles with otherSideWindow
 
-	fmt.Printf("state: base=%d nxt=%d lbr=%d currSize=%d payLen=%d startCopy=%d\n", recvBuf.base, recvBuf.nxt, recvBuf.lbr, recvBuf.currSize, payLen, startCopy)
+	// copy(recvBuf.buf[startCopy:endCopy],payload[:payLen])
+	// recvBuf.currSize += payLen // no check for exceeding bufsize bc sender won't send exceeding since sender-side logic handles
 
-	/* next updated here! don't move lbr until READ() */
-	recvBuf.nxt += payLen
+
+	bytesWritten := recvBuf.cBuf.WriteIntoBuf(recvBuf.nxt, payload)
+	if bytesWritten != len(payload) {
+		fmt.Printf("[TCP - handlePayload] only wrote %d/%d bytes into recv buffer\n",bytesWritten,len(payload))
+		recvBuf.mu.Unlock()
+		return nil
+	}
+	
+	recvBuf.nxt += payLen	/* next updated here! don't move lbr until READ() */
 	activeUpdatedSeqNum := tcpHeader.SeqNum+payLen
+	fmt.Printf("state: base=%d nxt=%d lbr=%d currSize=%d payLen=%d startCopy=%d\n", recvBuf.cBuf.baseSeq, recvBuf.nxt, recvBuf.lbr, recvBuf.cBuf.currSize, payLen)
 
 	/* print receive buffer for debugging */
-	fmt.Printf("copied bytes: %q\n", recvBuf.buf[startCopy:endCopy])
-	endOfBuf := recvBuf.nxt - recvBuf.base
-	fmt.Printf("entire buffer [0:%d]: %q\n", endOfBuf, recvBuf.buf[:endOfBuf])
+	fmt.Printf("copied bytes: %q\n", recvBuf.cBuf.SliceFrom(tcpHeader.SeqNum, payLen))
+	if recvBuf.cBuf.currSize > 0 {
+		fmt.Printf("entire readable region: %q\n",recvBuf.cBuf.SliceFrom(recvBuf.lbr+1, recvBuf.cBuf.currSize))
+	} else {
+		fmt.Printf("entire readable region: %q\n", []byte{})
+	}
 
 	recvBuf.mu.Unlock()
 
@@ -302,7 +319,6 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 	default:
 	}
 	entry.sendPureAck(activeUpdatedSeqNum)
-	
 	return nil
 }
 
@@ -315,7 +331,7 @@ func (entry *SocketTableEntry) sendPureAck(otherSideSeq uint32) error {
 		AckNum:        otherSideSeq,
 		DataOffset:    20,
 		Flags:         header.TCPFlagAck,
-		WindowSize:    uint16(MAX_WIN_SIZE - entry.normalSocket.recvBuf.currSize),
+		WindowSize:    uint16(MAX_WIN_SIZE - entry.normalSocket.recvBuf.cBuf.currSize),
 		Checksum:      0,
 		UrgentPointer: 0,
 	}
@@ -334,13 +350,13 @@ func (entry *SocketTableEntry) sendPureAck(otherSideSeq uint32) error {
 /* creates tcp header and calls send method to send segment to receiving end of conn */
 func (entry *SocketTableEntry) sendSegment(segment []byte) error {
 	tcpHdr := &header.TCPFields{
-		SrcPort:       entry.localPort, // TODO: verify
+		SrcPort:       entry.localPort,
 		DstPort:       entry.destPort,
 		SeqNum:        entry.seqNum,
 		AckNum:        entry.lastKnownAck, /* be sure to update this frequently */
 		DataOffset:    20,
 		Flags:         header.TCPFlagAck, /* data should be type ACK */
-		WindowSize:    uint16(MAX_WIN_SIZE - entry.normalSocket.recvBuf.currSize),
+		WindowSize:    uint16(MAX_WIN_SIZE - entry.normalSocket.recvBuf.cBuf.currSize),
 		Checksum:      0,
 		UrgentPointer: 0,
 	}
@@ -389,13 +405,16 @@ window
 func (entry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 	sendBuf := entry.normalSocket.sendBuf
 	sendBuf.mu.Lock()
-	
+	defer sendBuf.mu.Unlock()
+
 	// ------------------  TODO: test edge cases once circular array is up --------------
 
 	// RFC: SND.UNA < SEG.ACK <= SND.NXT
 	if sendBuf.una < seg.AckNum && seg.AckNum <= sendBuf.nxt {
 		fmt.Println("[TCP - handlePureAck] adjusting UNA to seg.AckNum")
+		ackedBytes := seg.AckNum - sendBuf.una
 		sendBuf.una = seg.AckNum
+		sendBuf.cBuf.AdvanceBase(ackedBytes)
 	} else if seg.AckNum > sendBuf.nxt { // RFC: If the ACK acks something not yet sent (SEG.ACK > SND.NXT), then send an ACK, drop the segment, and return
 		// TODO: implement a sendPureAckForSender(). this is a bit of a pain, since sendPureAck() is for the recv side and thus we need a new version
 		fmt.Println("[TCP - handlePureAck] TODO, condition seg.AckNum > sendBuf.nxt, no fix implemented yet")
@@ -409,7 +428,6 @@ func (entry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 
 	sendBuf.otherSideWindow = seg.WindowSize // update new window size
 	fmt.Printf("[TCP - handlePureAck] sender got new recvr window size: %d\n", sendBuf.otherSideWindow)
-	sendBuf.mu.Unlock()
 	return nil
 }
 
@@ -427,21 +445,41 @@ func (entry *SocketTableEntry) sendLoop() {
 		conn.sendBuf.mu.Lock()
 		sendBuf := conn.sendBuf
 
-		/* get indices of data to send 
-		should be the segment from nxt through lbw */
-		nxt := int(sendBuf.nxt - sendBuf.base) /* next sequence num (to send) - starting sequence num */
-		lbw := int(sendBuf.lbw - sendBuf.base) /* last byte written by app - starting sequence num */
-		// if no unsent data, just return
-		if lbw < nxt {
-			fmt.Println("no unsent data")
+		// if not necessary, pass
+		if sendBuf.lbw < sendBuf.nxt {
+			fmt.Println("[TCP - sendLoop] no unsent data")
 			conn.sendBuf.mu.Unlock()
-			return
+			continue
 		}
 
-		/* print send buffer for debugging */
-		fmt.Println("Printing send buffer contents copied before sending segment: ")
-		fmt.Printf("copied bytes: %q\n", sendBuf.buf[nxt:lbw+1])
-		fmt.Printf("entire buffer: %q\n", sendBuf.buf[:sendBuf.currSize])
+		// // old pre-circlebuf 
+		// /* get indices of data to send 
+		// should be the segment from nxt through lbw */
+		// nxt := int(sendBuf.nxt - sendBuf.base) /* next sequence num (to send) - starting sequence num */
+		// lbw := int(sendBuf.lbw - sendBuf.base) /* last byte written by app - starting sequence num */
+		// // if no unsent data, just return
+		// if lbw < nxt {
+		// 	fmt.Println("no unsent data")
+		// 	conn.sendBuf.mu.Unlock()
+		// 	return
+		// }
+
+		// /* print send buffer for debugging */
+		// fmt.Println("Printing send buffer contents copied before sending segment: ")
+		// fmt.Printf("copied bytes: %q\n", sendBuf.buf[nxt:lbw+1])
+		// fmt.Printf("entire buffer: %q\n", sendBuf.buf[:sendBuf.currSize])
+
+		fmt.Println("Printing send buffer contents copied before sending segment:")
+		bytesAvailableInBuf := sendBuf.lbw-sendBuf.nxt+1 	// NOTE: lbw is INCLUSIVE, meaning that we MUST add +1
+															// 		 since LBW points to a byte that we need to send also
+		fmt.Printf("[TCP - sendLoop] state: base=%d una=%d nxt=%d lbw=%d currSize=%d bytesAvail=%d otherSideWindow=%d\n",
+					sendBuf.cBuf.baseSeq,sendBuf.una,sendBuf.nxt,sendBuf.lbw,sendBuf.cBuf.currSize,bytesAvailableInBuf,sendBuf.otherSideWindow)
+		/* whole send buffer */
+		if sendBuf.cBuf.currSize > 0 {
+			fmt.Printf("entire live send buffer: %q\n",sendBuf.cBuf.SliceFrom(sendBuf.cBuf.baseSeq, sendBuf.cBuf.currSize))
+		} else {
+			fmt.Printf("entire live send buffer: %q\n", []byte{})
+		}
 
 		/* TODO: start zero-window-probing if necessary */
 
@@ -449,51 +487,52 @@ func (entry *SocketTableEntry) sendLoop() {
 		// 			where SND.LBW - SND.NXT is just everything in the buffer to-be-sent
 		//			where SND.WND - (SND.NXT-SND.UNA) is otherSideWindow - bytesInFlight
 
-		bytesAvailableInBuf := lbw-nxt+1 	// NOTE: lbw is INCLUSIVE, meaning that we MUST add +1
-											// 		 since LBW points to a byte that we need to send also
 		windowRemaining := int(sendBuf.otherSideWindow) - int(sendBuf.getBytesInFlight())
-		if windowRemaining <= 0 { // TODO: add ZWP here i think?
-			fmt.Println("[TCP - sendloop] no window left")
+		if windowRemaining <= 0 { // TODO: add ZWP here i think? should be here
+			fmt.Println("[TCP - sendloop] no window left") // update: couple hours later, ran into ZWP issue here. TODO:!
 			conn.sendBuf.mu.Unlock()
-			return
+			continue
 		}
 
-		var maxBytesSendable int
-		var copyAllAvailableBytes bool
-
-		if bytesAvailableInBuf <= windowRemaining {
+		var maxBytesSendable uint32
+		if int(bytesAvailableInBuf) <= windowRemaining {
 			maxBytesSendable = bytesAvailableInBuf
-			copyAllAvailableBytes = true
+			fmt.Println("[TCP - sendLoop] copying all available bytes in sendBuf")
 		} else {
-			maxBytesSendable = windowRemaining
-			copyAllAvailableBytes = false
+			maxBytesSendable = uint32(windowRemaining)
+			fmt.Println("[TCP - sendLoop] copying only remaining receiver window")
 		}
 
-		segmentData := make([]byte, maxBytesSendable)
-		if copyAllAvailableBytes {
-			copy(segmentData, sendBuf.buf[nxt:lbw+1])
-			fmt.Println("[TCP - sendloop] copying all avail bytes in sendBuf")
-		} else {
-			copy(segmentData, sendBuf.buf[nxt:nxt+maxBytesSendable])
-			fmt.Println("[TCP - sendloop] copying only the remWindow - bytesInFlight into sendBuf")
-		}
+		// segmentData := make([]byte, maxBytesSendable)
+		// if copyAllAvailableBytes {
+		// 	copy(segmentData, sendBuf.buf[nxt:lbw+1])
+		// 	fmt.Println("[TCP - sendloop] copying all avail bytes in sendBuf")
+		// } else {
+		// 	copy(segmentData, sendBuf.buf[nxt:nxt+maxBytesSendable])
+		// 	fmt.Println("[TCP - sendloop] copying only the remWindow - bytesInFlight into sendBuf")
+		// }
+
+		segmentData := sendBuf.cBuf.SliceFrom(sendBuf.nxt, uint32(maxBytesSendable))
 		conn.sendBuf.mu.Unlock()
 
 		/* if we send without error, move nxt */
 		if entry.sendSegment(segmentData) == nil {
+			conn.sendBuf.mu.Lock()
 			sendBuf.nxt += uint32(maxBytesSendable)
 			entry.seqNum = sendBuf.nxt // move seqNum update here so it does not diverge from snd.nxt in case of err
+			conn.sendBuf.mu.Unlock()
 		} else {
 			fmt.Printf("Error sending segment\n")
 		}
-		
-		// viz after all updates
-		fmt.Printf("> ")
-		printBufferWithPointers(sendBuf.buf, sendBuf.base, 10, []BufPointer{
-			{seq: sendBuf.una, mark: "U"},
-			{seq: sendBuf.nxt, mark: "N"},
-			{seq: sendBuf.lbw, mark: "L"},
-		})
+
+		// // Only a facility for non-circ arrays
+		// // viz after all updates
+		// fmt.Printf("> ")
+		// printBufferWithPointers(sendBuf.cBuf.buf, sendBuf.base, 10, []BufPointer{
+		// 	{seq: sendBuf.una, mark: "U"},
+		// 	{seq: sendBuf.nxt, mark: "N"},
+		// 	{seq: sendBuf.lbw, mark: "L"},
+		// })
 	}
 }
 

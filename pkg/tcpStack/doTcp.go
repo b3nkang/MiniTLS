@@ -204,6 +204,7 @@ func (entry *SocketTableEntry) initBufs(otherSideSeq uint32) {
 	sendBuf := &SendBuf{
 		cBuf: sendCBuf,
 		dataWrittenToBuf: make(chan struct{}, 1),
+		otherSideWindow: MAX_WIN_SIZE,
 	}
 	recvCBuf := NewCircleBuf(MAX_WIN_SIZE, otherSideSeq)
 	recvBuf := &RecvBuf{
@@ -397,11 +398,12 @@ func (entry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 
 	// ------------------  TODO: test edge cases once circular array is up --------------
 
-	// RFC: SND.UNA < SEG.ACK <= SND.NXT
+	// RFC: SND.UNA < SEG.ACK <= SND.NXT -> ACK num of segment is less than or equal to our next Sequence Num (in our send buf)
 	if sendBuf.una < seg.AckNum && seg.AckNum <= sendBuf.nxt {
 		fmt.Println("[TCP - handlePureAck] adjusting UNA to seg.AckNum")
-		ackedBytes := seg.AckNum - sendBuf.una
-		sendBuf.una = seg.AckNum
+		ackedBytes := seg.AckNum - sendBuf.una /* num bytes accounted for via this ACK */
+		sendBuf.una = seg.AckNum /* move UNA up */
+		/* adjust internals of circular buffer to reflect num bytes Acked */
 		sendBuf.cBuf.AdvanceBase(ackedBytes)
 	} else if seg.AckNum > sendBuf.nxt { // RFC: If the ACK acks something not yet sent (SEG.ACK > SND.NXT), then send an ACK, drop the segment, and return
 		// TODO: implement a sendPureAckForSender(). this is a bit of a pain, since sendPureAck() is for the recv side and thus we need a new version
@@ -476,6 +478,8 @@ func (entry *SocketTableEntry) sendLoop() {
 		//			where SND.WND - (SND.NXT-SND.UNA) is otherSideWindow - bytesInFlight
 
 		windowRemaining := int(sendBuf.otherSideWindow) - int(sendBuf.getBytesInFlight())
+		fmt.Printf("[TCP - sendloop] Other side window: %d, Bytes in flight: %d, Window Remaining (OSW - BIF) = %d\n", 
+					sendBuf.otherSideWindow, sendBuf.getBytesInFlight(), windowRemaining)
 		if windowRemaining <= 0 { // TODO: add ZWP here i think? should be here
 			fmt.Println("[TCP - sendloop] no window left") // update: couple hours later, ran into ZWP issue here. TODO:!
 			conn.sendBuf.mu.Unlock()

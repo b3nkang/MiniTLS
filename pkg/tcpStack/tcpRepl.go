@@ -169,6 +169,10 @@ func (tcp *TCPStack) sCommand(socketNum int, data []byte) {
 /* call VRead after locating socket */
 func (tcp *TCPStack) rCommand(socketNum int, numBytes int) {
 	socket := tcp.getNormalSocket(socketNum)
+	if socket == nil {
+		fmt.Printf("Cannot read from socket: %d\n", socketNum)
+		return
+	}
     buf := make([]byte, numBytes)
     bytesCopied, err := socket.VRead(buf)
     if err != nil {

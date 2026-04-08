@@ -73,14 +73,18 @@ func (cb *CircleBuf) SliceFrom(seq uint32, n uint32) []byte {
 	return out
 }
 
-func (cb *CircleBuf) AdvanceBase(n uint32) {
-	if n == 0 {
+/* reclaim space in buffer after ACKing bytes */
+func (cb *CircleBuf) AdvanceBase(numBytesAcked uint32) {
+	if numBytesAcked == 0 {
 		return
 	}
-	if n > cb.currSize {
-		n = cb.currSize
+    /* deal with edge case that ACK is greater than current size */
+	if numBytesAcked > cb.currSize {
+		numBytesAcked = cb.currSize
 	}
-	cb.baseSeq += n
-	cb.currSize -= n
-	cb.head = (cb.head + int(n)) % int(cb.maxSize)
+
+    /* advance base sequence num, decrease buffer size, and move head */
+	cb.baseSeq += numBytesAcked
+	cb.currSize -= numBytesAcked
+	cb.head = (cb.head + int(numBytesAcked)) % int(cb.maxSize)
 }

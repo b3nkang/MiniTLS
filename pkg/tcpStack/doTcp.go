@@ -280,10 +280,16 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 
 	// copy(recvBuf.buf[startCopy:endCopy],payload[:payLen])
 	// recvBuf.currSize += payLen // no check for exceeding bufsize bc sender won't send exceeding since sender-side logic handles
-
+	
+	/* quick space check before writing -- shouldn't be neccesary if sender works right */
+	space := int(recvBuf.cBuf.FreeSpace())
+	if len(payload) > space {
+		fmt.Printf("[TCP - handlePayload] ERROR: payload length longer than free space in recv buf! Sender side should now allow this. Writing truncated version of payload into recv buf")
+		payload = payload[:space]
+	}
 
 	bytesWritten := recvBuf.cBuf.WriteIntoBuf(recvBuf.nxt, payload)
-	if bytesWritten != len(payload) {
+	if bytesWritten != len(payload) { /* will never get here right now */
 		fmt.Printf("[TCP - handlePayload] only wrote %d/%d bytes into recv buffer\n",bytesWritten,len(payload))
 		recvBuf.mu.Unlock()
 		return nil
@@ -431,101 +437,74 @@ func (entry *SocketTableEntry) sendLoop() {
 		/* wait for data to be put in buffer by VWrite */
 		<-conn.sendBuf.dataWrittenToBuf
 
-		/* lock mutex so nothing changes rn */
-		conn.sendBuf.mu.Lock()
-		sendBuf := conn.sendBuf
+		for { /* added second loop here to deal with MSS (keep sending until all data sent) */
 
-		// if not necessary, pass
-		if sendBuf.lbw < sendBuf.nxt {
-			fmt.Println("[TCP - sendLoop] no unsent data")
-			conn.sendBuf.mu.Unlock()
-			continue
-		}
-
-		// // old pre-circlebuf 
-		// /* get indices of data to send 
-		// should be the segment from nxt through lbw */
-		// nxt := int(sendBuf.nxt - sendBuf.base) /* next sequence num (to send) - starting sequence num */
-		// lbw := int(sendBuf.lbw - sendBuf.base) /* last byte written by app - starting sequence num */
-		// // if no unsent data, just return
-		// if lbw < nxt {
-		// 	fmt.Println("no unsent data")
-		// 	conn.sendBuf.mu.Unlock()
-		// 	return
-		// }
-
-		// /* print send buffer for debugging */
-		// fmt.Println("Printing send buffer contents copied before sending segment: ")
-		// fmt.Printf("copied bytes: %q\n", sendBuf.buf[nxt:lbw+1])
-		// fmt.Printf("entire buffer: %q\n", sendBuf.buf[:sendBuf.currSize])
-
-		fmt.Println("Printing send buffer contents copied before sending segment:")
-		bytesAvailableInBuf := sendBuf.lbw-sendBuf.nxt+1 	// NOTE: lbw is INCLUSIVE, meaning that we MUST add +1
-															// 		 since LBW points to a byte that we need to send also
-		fmt.Printf("[TCP - sendLoop] state: base=%d una=%d nxt=%d lbw=%d currSize=%d bytesAvail=%d otherSideWindow=%d\n",
-					sendBuf.cBuf.baseSeq,sendBuf.una,sendBuf.nxt,sendBuf.lbw,sendBuf.cBuf.currSize,bytesAvailableInBuf,sendBuf.otherSideWindow)
-		/* whole send buffer */
-		if sendBuf.cBuf.currSize > 0 {
-			fmt.Printf("entire live send buffer: %q\n",sendBuf.cBuf.SliceFrom(sendBuf.cBuf.baseSeq, sendBuf.cBuf.currSize))
-		} else {
-			fmt.Printf("entire live send buffer: %q\n", []byte{})
-		}
-
-		/* TODO: start zero-window-probing if necessary */
-
-		// CHECK HOW MUCH WE CAN SEND: min(SND.LBW - SND.NXT, SND.WND - (SND.NXT-SND.UNA))
-		// 			where SND.LBW - SND.NXT is just everything in the buffer to-be-sent
-		//			where SND.WND - (SND.NXT-SND.UNA) is otherSideWindow - bytesInFlight
-
-		windowRemaining := int(sendBuf.otherSideWindow) - int(sendBuf.getBytesInFlight())
-		fmt.Printf("[TCP - sendloop] Other side window: %d, Bytes in flight: %d, Window Remaining (OSW - BIF) = %d\n", 
-					sendBuf.otherSideWindow, sendBuf.getBytesInFlight(), windowRemaining)
-		if windowRemaining <= 0 { // TODO: add ZWP here i think? should be here
-			fmt.Println("[TCP - sendloop] no window left") // update: couple hours later, ran into ZWP issue here. TODO:!
-			conn.sendBuf.mu.Unlock()
-			continue
-		}
-
-		var maxBytesSendable uint32
-		/* adjust num bytes to send based on available window if necessary */
-		if int(bytesAvailableInBuf) <= windowRemaining {
-			maxBytesSendable = bytesAvailableInBuf
-			fmt.Println("[TCP - sendLoop] copying all available bytes in sendBuf")
-		} else {
-			maxBytesSendable = uint32(windowRemaining)
-			fmt.Println("[TCP - sendLoop] copying only remaining receiver window")
-		}
-
-		// segmentData := make([]byte, maxBytesSendable)
-		// if copyAllAvailableBytes {
-		// 	copy(segmentData, sendBuf.buf[nxt:lbw+1])
-		// 	fmt.Println("[TCP - sendloop] copying all avail bytes in sendBuf")
-		// } else {
-		// 	copy(segmentData, sendBuf.buf[nxt:nxt+maxBytesSendable])
-		// 	fmt.Println("[TCP - sendloop] copying only the remWindow - bytesInFlight into sendBuf")
-		// }
-
-		segmentData := sendBuf.cBuf.SliceFrom(sendBuf.nxt, uint32(maxBytesSendable))
-		conn.sendBuf.mu.Unlock()
-
-		/* if we send without error, move nxt */
-		if entry.sendSegment(segmentData) == nil {
+			/* lock mutex so nothing changes rn */
 			conn.sendBuf.mu.Lock()
-			sendBuf.nxt += uint32(maxBytesSendable)
-			entry.seqNum = sendBuf.nxt // move seqNum update here so it does not diverge from snd.nxt in case of err
-			conn.sendBuf.mu.Unlock()
-		} else {
-			fmt.Printf("Error sending segment\n")
-		}
+			sendBuf := conn.sendBuf
 
-		// // Only a facility for non-circ arrays
-		// // viz after all updates
-		// fmt.Printf("> ")
-		// printBufferWithPointers(sendBuf.cBuf.buf, sendBuf.base, 10, []BufPointer{
-		// 	{seq: sendBuf.una, mark: "U"},
-		// 	{seq: sendBuf.nxt, mark: "N"},
-		// 	{seq: sendBuf.lbw, mark: "L"},
-		// })
+			// if not necessary, pass
+			if sendBuf.lbw < sendBuf.nxt {
+				fmt.Println("[TCP - sendLoop] no unsent data")
+				conn.sendBuf.mu.Unlock()
+				break
+			}
+
+			bytesAvailableInBuf := sendBuf.lbw-sendBuf.nxt+1 	// NOTE: lbw is INCLUSIVE, meaning that we MUST add +1
+																// 		 since LBW points to a byte that we need to send also
+			fmt.Printf("[TCP - sendLoop] state: base=%d una=%d nxt=%d lbw=%d currSize=%d bytesAvail=%d otherSideWindow=%d\n",
+						sendBuf.cBuf.baseSeq,sendBuf.una,sendBuf.nxt,sendBuf.lbw,sendBuf.cBuf.currSize,bytesAvailableInBuf,sendBuf.otherSideWindow)
+
+			/* PRINTING whole send buffer */
+			if sendBuf.cBuf.currSize > 0 {
+				fmt.Printf("entire live send buffer: %q\n",sendBuf.cBuf.SliceFrom(sendBuf.cBuf.baseSeq, sendBuf.cBuf.currSize))
+			} else {
+				fmt.Printf("entire live send buffer: %q\n", []byte{})
+			}
+
+			// CHECK HOW MUCH WE CAN SEND: min(SND.LBW - SND.NXT, SND.WND - (SND.NXT-SND.UNA))
+			// 			where SND.LBW - SND.NXT is just everything in the buffer to-be-sent
+			//			where SND.WND - (SND.NXT-SND.UNA) is otherSideWindow - bytesInFlight
+
+
+			/* calculate amount of space in receiver's receive buf = other window size - bytes in flight */
+			windowRemaining := int(sendBuf.otherSideWindow) - int(sendBuf.getBytesInFlight())
+			fmt.Printf("[TCP - sendloop] Other side window: %d, Bytes in flight: %d, Window Remaining (OSW - BIF) = %d\n", 
+						sendBuf.otherSideWindow, sendBuf.getBytesInFlight(), windowRemaining)
+
+			if windowRemaining <= 0 {
+				fmt.Println("[TCP - sendloop] no window left") // update: couple hours later, ran into ZWP issue here. TODO:!
+				/* TODO: start zero-window-probing here! */
+				conn.sendBuf.mu.Unlock()
+				break
+			}
+
+			maxBytesSendable := bytesAvailableInBuf
+			if int(maxBytesSendable) > windowRemaining {
+				fmt.Printf("Decreasing sendable bytes (%d) to match window remaining (%d)\n", maxBytesSendable, windowRemaining)
+                maxBytesSendable = uint32(windowRemaining)
+            }
+            if maxBytesSendable > MAX_SEG_SIZE {
+				fmt.Printf("Decreasing sendable bytes (%d) to match max segment size (%d)\n", maxBytesSendable, MAX_SEG_SIZE)
+                maxBytesSendable = MAX_SEG_SIZE
+            }
+
+			segmentData := sendBuf.cBuf.SliceFrom(sendBuf.nxt, uint32(maxBytesSendable))
+			conn.sendBuf.mu.Unlock()
+
+			if entry.sendSegment(segmentData) != nil {
+				fmt.Println("[TCP - Send Loop] Error sending segment")
+				break
+			}
+
+            conn.sendBuf.mu.Lock()
+			/* update NXT and seqNum */
+            sendBuf.nxt += maxBytesSendable
+            entry.seqNum = sendBuf.nxt
+            conn.sendBuf.mu.Unlock()
+
+			/* loop again--will break if no data in buffer */
+		}
 	}
 }
 
@@ -534,6 +513,10 @@ func (sendBuf *SendBuf) getBytesInFlight() uint32 {
 	return sendBuf.nxt - sendBuf.una
 }
 
+
+
+
+/* ----------------------PRINTING (NON-CIRCL BUF, OBSOLETE NOW------------------*/
 type BufPointer struct {
 	seq  uint32
 	mark string

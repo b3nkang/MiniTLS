@@ -10,6 +10,7 @@ func NewCircleBuf(maxSize uint32, baseSeq uint32) *CircleBuf {
     }
 }
 
+
 func (cb *CircleBuf) SeqNumToIndex(seqNum uint32) int {
 	offset := int(seqNum - cb.baseSeq)
 	return (cb.head + offset) % int(cb.maxSize)
@@ -42,14 +43,17 @@ func (cb *CircleBuf) WriteIntoBuf(seqNum uint32, data []byte) int {
     return len(data)
 }
 
+/* read n bytes into provided buffer starting at seq */
 func (cb *CircleBuf) ReadFromBuf(seqNum uint32, dest []byte, n uint32) int {
     if n < 1 || len(dest) == 0 {
 		return 0
 	}
+    /* truncate num bytes to read if necessary --won't be necessary */
 	if n > uint32(len(dest)) {
 		n = uint32(len(dest))
 	}
 
+    /* get index of starting seq */
     start := cb.SeqNumToIndex(seqNum)
     firstChunk := min(int(n), len(cb.buf)-start) // read either the whole block of data or hit the end and wrap around
 
@@ -63,6 +67,7 @@ func (cb *CircleBuf) ReadFromBuf(seqNum uint32, dest []byte, n uint32) int {
     return int(n)
 }
 
+/* extract 'n' in-order bytes from circular buffer starting at sequence num 'seq' */
 func (cb *CircleBuf) SliceFrom(seq uint32, n uint32) []byte {
 	if n == 0 {
 		return make([]byte, 0)

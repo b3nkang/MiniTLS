@@ -20,7 +20,8 @@ const (
 )
 
 const (
-	MAX_WIN_SIZE = 65535 /* check this...*/
+	MAX_WIN_SIZE = 65535
+	MAX_SEG_SIZE = 3
 )
 
 /* info about 1 socket in table */

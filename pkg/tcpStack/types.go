@@ -98,8 +98,9 @@ type VTCPConn struct {
 }
 
 type SendBuf struct {
-	buf []byte 		/* simple normal array for now */
-	currSize uint32	/* curr amt of data in buf */	
+	// buf []byte 		/* simple normal array for now */
+	// currSize uint32	/* curr amt of data in buf */	
+	cBuf *CircleBuf
 
 	mu sync.Mutex 	/* mutex for buffer */
 	base uint32 	/* sequence num at index=0 */
@@ -117,11 +118,12 @@ type SendBuf struct {
 }
 
 type RecvBuf struct {
-	buf []byte		/* simple normal array for now */
-	currSize uint32	/* curr amt of data in buf */
+	// buf []byte		/* simple normal array for now */
+	// currSize uint32	/* curr amt of data in buf */
+	cBuf *CircleBuf
 
 	mu sync.Mutex 	/* mutex between incoming packet logic and vread */
-	base uint32 	/* sequence num at index=0*/
+	// base uint32 	/* sequence num at index=0*/ --> in circleBuf now
 
 	/* pointers */
 	lbr uint32		/* last byte read (next byte that gets read when app calls read) */
@@ -131,5 +133,12 @@ type RecvBuf struct {
 	dataToRead chan struct {}
 }
 
+type CircleBuf struct {
+    buf []byte
+    maxSize uint32
+    currSize uint32
+    baseSeq  uint32
+	head int
+}
 
 

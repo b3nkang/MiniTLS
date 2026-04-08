@@ -2,42 +2,26 @@ package tcpstack
 
 /*
 
-NEXT STEPS:
+Recent changes:
 
-// TODO: refactor tcpHeader = SEGheader or something to make things much less confusing
+4. Receiving ---------------------------------------------------------------------------------------> done. did a decent amount of testing, decently confident
+    - I think Acks are being sent but not sure if they're correct--verify that ---------------------> they are now and should be correct
+        - write method to handle ack and then do the things below ----------------------------------> done
+    - passing information from ACK to sending thread -----------------------------------------------> done
+        - sending thread needs to know window size and keep track of data IN FLIGHT and
+            compare those numbers before sending new data ------------------------------------------> done
+        - we aren't doing this at all yet
+5. Circular buffer ---------------------------------------------------------------------------------> it is implemented with light testing indicating it's working.
+    - Make a circular buffer struct that has methods for indexing, etc and add to send & recv buf     more testing is needed however. you can test edge cases by
+                                                                                                      changing MAX_WIN_SIZE in types.go from 65k to like 15
 
-Things Isabele Did Today (4/6 before 5:00pm):
-	- got send working with correct indices (fixed InitBuf method)
-		- some other small bug fixes to do this but I lowkey forgot--mostly indexing
-			stuff and accessing the buffer
-		- good thing to remember: pointers in the buffer refer to SEQUENCE NUMS, not indices.
-			to get indices (for now) subtract the base pointer (eventually will change due to circular
-				buffer but we'll write methods to do that)
-	- switched the channel in Receive buffer to be a signal channel, not data
-		- because HandlePayload was blocking on sending received data to the data channel
-				but if no one had called VRead, we don't want them to block
-		- so now VRead will have to adjust pointers in the buffer (just like VWrite) and
-				take on a bit more responsibility
-	- send is now working repeatedly and from both sides
-		- sequence nums from send side should be updating correctly (didn't look in wireshark tho)
-		- things in recv buf should be updating correctly too
-	- VRead was very wrong...needed a loop (so that it blocks until data is ready)
-		- also needs to check CurrSize and not just signal--signal is only for NEW data but if
-				it just wants to read old data, then it doesn't need a signal to look
-
-Next steps after what Isabelle did today:
-
-4. Receiving
-	- I think Acks are being sent but not sure if they're correct--verify that
-		- write method to handle ack and then do the things below
-	- passing information from ACK to sending thread
-		- sending thread needs to know window size and keep track of data IN FLIGHT and
-			compare those numbers before sending new data
-		- we aren't doing this at all yet
-5. Circular buffer
-	- Make a circular buffer struct that has methods for indexing, etc and add to send & recv buf
-
-- don't worry about early arrivals initially (just ignore if wrong sequence num)
+NEXT STEPS/TODO:s:
+    - check that the circleBuf slop is looking ok
+        - I did get to a point where I ran into a ZWP crash, so ZWP likely needs to be implemented to make progress on this
+        - My wireshark must be broken bc I can't see any packets, so the testing was all through prints so impl could be a bit sus,
+          so if you can do this I would recommend checking there
+    - handle early arrivals. i don't actually think this should be too bad at all, min heap plus an extra check in HandlePayload()
+    - much further down the line but from here I think it's beginning sf and rf repl commands?
 
 NOTES:
 - per RFC: default MSS is 536 (max segment size) // TODO: i'm not enforcing this yet, should we? -ben

@@ -38,7 +38,6 @@ Next steps after what Isabelle did today:
 	- Make a circular buffer struct that has methods for indexing, etc and add to send & recv buf
 
 - don't worry about early arrivals initially (just ignore if wrong sequence num)
-- refactor handshake methods into separate file
 
 NOTES:
 - per RFC: default MSS is 536 (max segment size) // TODO: i'm not enforcing this yet, should we? -ben
@@ -52,6 +51,7 @@ import (
 	"fmt"
 	utils "ip-isabelle-and-ben/pkg/protocol"
 	"net/netip"
+	"strings"
 
 	ipv4header "github.com/brown-csci1680/iptcp-headers"
 	"github.com/google/netstack/tcpip/header"
@@ -98,16 +98,19 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 		tcp.handleSynAck(socketEntry, tcpHdr)
 	case ESTABLISHED:
 		fmt.Println("[TCP] handler received packet in state ESTABLISHED -> handling flags and/or payload")
-		if tcpHdr.Flags & header.TCPFlagFin != 0 {
-			// TODO: handle for teardowmn
-		} else if tcpHdr.Flags & header.TCPFlagRst != 0 {
-			// TODO: handle at some point after mstone2
-		} else if tcpHdr.Flags & header.TCPFlagAck != 0 && len(tcpPayload) < 1 {
+
+		switch {
+		case tcpHdr.Flags & header.TCPFlagFin != 0:
+			// TODO: teardown
+			return
+		case tcpHdr.Flags&header.TCPFlagRst != 0:
+			// TODO: handle later
+			return
+		case tcpHdr.Flags & header.TCPFlagAck != 0 && len(tcpPayload) == 0:
 			fmt.Println("[TCP - HandleTCP] recvd pureAck, handling")
 			socketEntry.handlePureAck(tcpHdr)
 			return
-		} else if len(tcpPayload) < 1 {
-			// empty payload with nothing, drop
+		case len(tcpPayload) < 1:
 			fmt.Println("[TCP - HandleTCP] recvd full empty packet, dropping")
 			return
 		}
@@ -479,14 +482,95 @@ func (entry *SocketTableEntry) sendLoop() {
 		/* if we send without error, move nxt */
 		if entry.sendSegment(segmentData) == nil {
 			sendBuf.nxt += uint32(maxBytesSendable)
-			entry.seqNum = sendBuf.nxt // move seqNum update here so it does not diverge from snd.nxt 
+			entry.seqNum = sendBuf.nxt // move seqNum update here so it does not diverge from snd.nxt in case of err
 		} else {
 			fmt.Printf("Error sending segment\n")
 		}
+		
+		// viz after all updates
+		fmt.Printf("> ")
+		printBufferWithPointers(sendBuf.buf, sendBuf.base, 10, []BufPointer{
+			{seq: sendBuf.una, mark: "U"},
+			{seq: sendBuf.nxt, mark: "N"},
+			{seq: sendBuf.lbw, mark: "L"},
+		})
 	}
 }
 
 // tiny helper
 func (sendBuf *SendBuf) getBytesInFlight() uint32 {
 	return sendBuf.nxt - sendBuf.una
+}
+
+type BufPointer struct {
+	seq  uint32
+	mark string
+}
+
+func printBufferWithPointers(buf []byte, base uint32, upTo int, pointers []BufPointer) {
+	if upTo <= 0 {
+		fmt.Println("[printPointers] upTo must be > 0")
+		return
+	}
+	if upTo > len(buf) {
+		upTo = len(buf)
+	}
+
+	vals := make([]string, upTo)
+	for i := 0; i < upTo; i++ {
+		if buf[i] == 0 {
+			vals[i] = padCell(".")
+		} else {
+			vals[i] = padCell(string(buf[i]))
+		}
+	}
+
+	marks := make([]string, upTo)
+	for i := 0; i < upTo; i++ {
+		marks[i] = padCell(".")
+	}
+
+	for _, ptr := range pointers {
+		idx := int(ptr.seq - base)
+		if idx < 0 || idx >= upTo {
+			continue
+		}
+
+		curr := trimCell(marks[idx])
+		if curr == "." {
+			curr = ptr.mark
+		} else {
+			curr += ptr.mark
+		}
+		marks[idx] = padCell(curr)
+	}
+
+	printRow("", vals)
+	printRow("  ", marks)
+}
+
+func printRow(prefix string, row []string) {
+	fmt.Print(prefix)
+	fmt.Print("[")
+	for i, s := range row {
+		fmt.Print(s)
+		if i != len(row)-1 {
+			fmt.Print(" ")
+		}
+	}
+	fmt.Println("]")
+}
+
+func padCell(s string) string {
+	if len(s) >= 3 {
+		return s
+	}
+	for len(s) < 3 {
+		s += " "
+	}
+	return s
+}
+
+func trimCell(s string) string {
+	return strings.TrimSpace(s)
 }

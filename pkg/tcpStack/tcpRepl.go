@@ -58,6 +58,14 @@ func (tcp *TCPStack) HandleREPLCommands() {
 			}
 			port := uint16(portInt)
 			go tcp.cCommand(addr, port) // so REPL dont block
+
+			// TODO::: bug when port doesn't exist -
+			// panic: runtime error: invalid memory address or nil pointer dereference
+			// [segmentation violation code=0x1 addr=0x40 pc=0x154a0c]
+			// goroutine 8 [running]:
+			// ip-isabelle-and-ben/pkg/tcpStack.(*TCPStack).HandleTCP(0x4000011440, 0x40003260a0, {0x40000a2014, 0x14, 0x564})
+			// 		/home/cs1680-user/tcp-big-chungus-1/pkg/tcpStack/doTcp.go:85 +0x46c
+			// ip-isabelle-and-ben/pkg/ipStack.(*IPStack).ipForwarding(0x400007a4e0, 0x40003260a0, {0x40000a2014, 0x14, 0x5
 		case "s":
 			if len(parts) != 3 {
 				fmt.Println("Usage: s <socketID> <bytes>")
@@ -87,6 +95,28 @@ func (tcp *TCPStack) HandleREPLCommands() {
 			go tcp.rCommand(sID, numBytes)
 		case "ls":
 			tcp.socketTable.listSockets()
+		case "ps":
+			if len(parts) != 2 {
+				fmt.Println("Usage: ps <socketID>")
+				continue
+			}
+			sID, err := strconv.Atoi(parts[1])
+			if err != nil {
+				fmt.Println("Socket ID must be an integer")
+				continue
+			}
+			tcp.pSendBuf(sID)
+		case "pr":
+			if len(parts) != 2 {
+				fmt.Println("Usage: pr <socketID>")
+				continue
+			}
+			sID, err := strconv.Atoi(parts[1])
+			if err != nil {
+				fmt.Println("Socket ID must be an integer")
+				continue
+			}
+			tcp.pRecvBuf(sID)
 		default:
 			fmt.Println("Unknown TCP command")
 		}
@@ -124,28 +154,9 @@ func (tcp *TCPStack) cCommand(addr netip.Addr, port uint16) {
 
 /* call VWrite after finding correct socket entry in table */
 func (tcp *TCPStack) sCommand(socketNum int, data []byte) {
-	/* check that socketID exists */
-	tcp.socketTable.mu.Lock()
-	socket, exists := tcp.socketTable.socketMap[socketNum]
-	tcp.socketTable.mu.Unlock()
-
-	if !exists {
-		fmt.Println("Invalid socket ID number")
-		return
-	}
-	/* check that normal socket exists */
-	if socket.normalSocket == nil {
-		fmt.Println("Socket table does not have TCPConn associated yet")
-		return
-	}
-	/* check that conn is established */
-	if socket.state != ESTABLISHED {
-		fmt.Printf("Connection with %d not ESTABLISHED\n", socketNum)
-		return
-	}
-
+	socket := tcp.getNormalSocket(socketNum)
 	/* call VWrite */
-	bytesWritten, err := socket.normalSocket.VWrite(data)
+	bytesWritten, err := socket.VWrite(data)
 
 	if err == nil {
 		fmt.Printf("%d bytes written to socket %d\n", bytesWritten, socketNum)
@@ -158,25 +169,9 @@ func (tcp *TCPStack) sCommand(socketNum int, data []byte) {
 
 /* call VRead after locating socket */
 func (tcp *TCPStack) rCommand(socketNum int, numBytes int) {
-    tcp.socketTable.mu.Lock()
-    socket, exists := tcp.socketTable.socketMap[socketNum]
-    tcp.socketTable.mu.Unlock()
-
-    if !exists {
-        fmt.Println("Invalid socket ID number")
-        return
-    }
-    if socket.normalSocket == nil {
-        fmt.Println("Socket is not a normal socket")
-        return
-    }
-    if socket.state != ESTABLISHED {
-        fmt.Printf("Connection with socket %d not ESTABLISHED\n", socketNum)
-        return
-    }
-
+	socket := tcp.getNormalSocket(socketNum)
     buf := make([]byte, numBytes)
-    bytesCopied, err := socket.normalSocket.VRead(buf)
+    bytesCopied, err := socket.VRead(buf)
     if err != nil {
         fmt.Printf("VRead error: %s\n", err)
         return
@@ -287,4 +282,60 @@ func PrintSocketTableEntry(e *SocketTableEntry) {
 	tw.Append([]string{"establishedChan", chanStr(e.establishedChan)})
 
 	tw.Render()
+}
+
+func (tcp *TCPStack) getNormalSocket(socketNum int) (*VTCPConn) {
+    tcp.socketTable.mu.Lock()
+    socket, exists := tcp.socketTable.socketMap[socketNum]
+    tcp.socketTable.mu.Unlock()
+
+	if !exists {
+		fmt.Println("Invalid socket ID number")
+		return nil
+	}
+	/* check that normal socket exists */
+	if socket.normalSocket == nil {
+		fmt.Println("Socket table does not have TCPConn associated yet")
+		return nil
+	}
+	/* check that conn is established */
+	if socket.state != ESTABLISHED {
+		fmt.Printf("Connection with %d not ESTABLISHED\n", socketNum)
+		return nil
+	}
+
+	return socket.normalSocket
+}
+
+func (tcp *TCPStack) pSendBuf(socketNum int) {
+	socket := tcp.getNormalSocket(socketNum)
+	if socket == nil {
+		return
+	}
+
+	sendBuf := socket.sendBuf
+	sendBuf.mu.Lock()
+	defer sendBuf.mu.Unlock()
+
+	printBufferWithPointers(sendBuf.buf, sendBuf.base, 10, []BufPointer{
+		{seq: sendBuf.una, mark: "U"},
+		{seq: sendBuf.nxt, mark: "N"},
+		{seq: sendBuf.lbw, mark: "L"},
+	})
+}
+
+func (tcp *TCPStack) pRecvBuf(socketNum int) {
+	socket := tcp.getNormalSocket(socketNum)
+	if socket == nil {
+		return
+	}
+
+	recvBuf := socket.recvBuf
+	recvBuf.mu.Lock()
+	defer recvBuf.mu.Unlock()
+
+	printBufferWithPointers(recvBuf.buf, recvBuf.base, 10, []BufPointer{
+		{seq: recvBuf.lbr, mark: "R"},
+		{seq: recvBuf.nxt, mark: "N"},
+	})
 }

@@ -85,16 +85,20 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 		fmt.Println("[TCP] handler received packet in state ESTABLISHED -> handling flags and/or payload")
 
 		switch {
+		/* FIN specified */
 		case tcpHdr.Flags & header.TCPFlagFin != 0:
 			// TODO: teardown
 			return
+		/* Reset specified -- immediately abort connection */
 		case tcpHdr.Flags&header.TCPFlagRst != 0:
 			// TODO: handle later
 			return
+		/* data ACK */
 		case tcpHdr.Flags & header.TCPFlagAck != 0 && len(tcpPayload) == 0:
 			fmt.Println("[TCP - HandleTCP] recvd pureAck, handling")
 			socketEntry.handlePureAck(tcpHdr)
 			return
+		/* invalid/empty packet */
 		case len(tcpPayload) < 1:
 			fmt.Println("[TCP - HandleTCP] recvd full empty packet, dropping")
 			return
@@ -479,6 +483,7 @@ func (entry *SocketTableEntry) sendLoop() {
 		}
 
 		var maxBytesSendable uint32
+		/* adjust num bytes to send based on available window if necessary */
 		if int(bytesAvailableInBuf) <= windowRemaining {
 			maxBytesSendable = bytesAvailableInBuf
 			fmt.Println("[TCP - sendLoop] copying all available bytes in sendBuf")

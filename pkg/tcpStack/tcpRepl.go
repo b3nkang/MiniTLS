@@ -131,7 +131,6 @@ func (tcp *TCPStack) aCommand(port uint16) {
 		return
 	}
 
-	/* should we be looping forever? idk what to do here really... */
 	for {
 		fmt.Println("calling Accept, this will just block for now and not return")
 		conn, err := listener.VAccept()

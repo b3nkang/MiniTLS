@@ -261,6 +261,9 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 		/* add segment to early arrivals heap */
 		recvBuf.earlyArrivals.PushSegment(tcpHeader.SeqNum, payload)
 		recvBuf.mu.Unlock()
+
+		/* send Ack */
+		entry.sendPureAck(recvBuf.nxt)
 		return nil
 	}
 

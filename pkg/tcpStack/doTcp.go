@@ -31,7 +31,7 @@ NOTES:
 	any TCP segments you send must be no larger than the MTU–therefore,
 	the maximum TCP payload size is: 1400 bytes - (size of IP header) - (size of TCP header)
 
-	This means  MSS is 1360 i think? maybe we should verify this...
+	This means  MSS is 1360 i think? maybe we should verify this...Verified: we can set MSS to whatever we want!
 
 // TODO: small, refactor tcpHeader = SEGheader or something to make things much less confusing
 // TODO: low prio/long term, look into if seqNum field is even necessary in table entry. may not be

@@ -204,22 +204,6 @@ func (conn *VTCPConn) VRead(buf []byte) (int, error) {
 		conn.recvBuf.lbr += uint32(numBytesRead)
 		conn.recvBuf.cBuf.AdvanceBase(uint32(numBytesRead))
 
-		/* check if we can move early arrivals in */
-		for {
-            min := conn.recvBuf.earlyArrivals.Peek()
-            if min == nil || min.startSeq != conn.recvBuf.nxt {
-                break
-            }
-			/* check buffer's free space (not window's) */
-            if len(min.data) > int(conn.recvBuf.cBuf.FreeSpace()) {
-                break
-            }
-
-			segment := conn.recvBuf.earlyArrivals.PopMin()
-			numBytesWritten := conn.recvBuf.cBuf.WriteIntoBuf(segment.startSeq, segment.data)
-			conn.recvBuf.nxt += uint32(numBytesWritten)
-        }
-
         conn.recvBuf.mu.Unlock()
         return numBytesRead, nil
     }

@@ -37,7 +37,7 @@ func (h *EarlyArrivals) PopMin() *EarlyArrival {
 	return heap.Pop(h).(*EarlyArrival)
 }
 
-/* get total length of DATA in the queue */
+/* get total length of DATA in the queue -- not necessary anymore */
 func (h EarlyArrivals) TotalDataLen() uint32 {
     var total uint32
     for _, seg := range h {

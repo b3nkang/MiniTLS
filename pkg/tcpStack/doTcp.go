@@ -534,8 +534,9 @@ func (sendBuf *SendBuf) getBytesInFlight() uint32 {
 	return sendBuf.nxt - sendBuf.una
 }
 
+/* DON'T count early arrivals toward overall window size */
 func (recvBuf *RecvBuf) getAvailableWindow() uint16 {
-	return uint16(MAX_WIN_SIZE - recvBuf.cBuf.currSize - recvBuf.earlyArrivals.TotalDataLen())
+	return uint16(MAX_WIN_SIZE - recvBuf.cBuf.currSize)
 }
 
 

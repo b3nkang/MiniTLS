@@ -16,15 +16,22 @@ Recent changes:
                                                                                                       changing MAX_WIN_SIZE in types.go from 65k to like 15
 
 NEXT STEPS/TODO:s:
-    - check that the circleBuf slop is looking ok
-        - I did get to a point where I ran into a ZWP crash, so ZWP likely needs to be implemented to make progress on this
+    - check that the circleBuf slop is looking ok -- seems fine?
+        - I did get to a point where I ran into a ZWP crash, so ZWP likely needs to be implemented to make progress on this -- next milestone
         - My wireshark must be broken bc I can't see any packets, so the testing was all through prints so impl could be a bit sus,
-          so if you can do this I would recommend checking there
+          so if you can do this I would recommend checking there --done, looks good
     - handle early arrivals. i don't actually think this should be too bad at all, min heap plus an extra check in HandlePayload()
     - much further down the line but from here I think it's beginning sf and rf repl commands?
 
 NOTES:
 - per RFC: default MSS is 536 (max segment size) // TODO: i'm not enforcing this yet, should we? -ben
+	- NO--doesn't have to be 536, but does have to adhere to this:
+	As in the IP assignment, never send packets greater than the MTU.
+	For our link layer, the maximum MTU is 1400 bytes:
+	any TCP segments you send must be no larger than the MTU–therefore,
+	the maximum TCP payload size is: 1400 bytes - (size of IP header) - (size of TCP header)
+
+	This means  MSS is 1360 i think? maybe we should verify this...
 
 // TODO: small, refactor tcpHeader = SEGheader or something to make things much less confusing
 // TODO: low prio/long term, look into if seqNum field is even necessary in table entry. may not be
@@ -188,18 +195,6 @@ func (tcp *TCPStack) sendTCP(sendReq *SendRequest) {
 
 /* initialize send and receive buffers in Conn obj */
 func (entry *SocketTableEntry) initBufs(otherSideSeq uint32) {
-	// sendBuf := &SendBuf{
-	// 	buf: make([]byte, MAX_WIN_SIZE),
-	// 	currSize: 0,
-	// 	dataWrittenToBuf: make(chan struct{}, 1), /* may be better to switch to signal channel and have VWrite write directly to buffer (with mutex) */
-	// }
-
-	// recvBuf := &RecvBuf{
-	// 	buf: make([]byte, MAX_WIN_SIZE),
-	// 	currSize: 0,
-	// 	dataToRead: make(chan struct{}, 1), 
-	// }
-
 	sendCBuf := NewCircleBuf(MAX_WIN_SIZE, entry.seqNum)
 	sendBuf := &SendBuf{
 		cBuf: sendCBuf,
@@ -213,7 +208,6 @@ func (entry *SocketTableEntry) initBufs(otherSideSeq uint32) {
 	}
 
 	/* init pointers */
-	// TODO: all pointer logic below is naive and may need to be revised
 	ourSeqNum := entry.seqNum
 
 	/* send buf --uses OUR (this side's) sequence numbers */
@@ -228,6 +222,9 @@ func (entry *SocketTableEntry) initBufs(otherSideSeq uint32) {
 	conn := entry.normalSocket
 	conn.sendBuf = sendBuf
 	conn.recvBuf = recvBuf
+
+	/* create receive buf's early arrivals min-heap */
+	recvBuf.earlyArrivals = MakeEarlyArrivals()
 
 	/* start threads for sending and receiving */
 	go entry.sendLoop()
@@ -255,34 +252,34 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 	fmt.Println("Packet being handled by receiver in handlePayload")
 	// prior logic already handles empty payloads, assume len(payload) > 0
 	recvBuf := entry.normalSocket.recvBuf
-	payLen := uint32(len(payload))
 
-	// TODO: update, currently we assume this is inorder and not going to wrap
 	recvBuf.mu.Lock()
 
-	/* check that seq num is what we expect (TODO: deal with early arrivals) */
-	// TODO: also deal with OLD/redundant segments - technically we are supposed to discard payload and send an ack back
-	if tcpHeader.SeqNum != recvBuf.nxt {
-		fmt.Printf("Expected SeqNum: %d, Actual SeqNum: %d, dropping payload\n", int(recvBuf.nxt), int(tcpHeader.SeqNum))
+	/* early arrival case -- seqNum of segment greater than NXT */
+	if tcpHeader.SeqNum > recvBuf.nxt {
+		fmt.Printf("[TCP HANDLE PAYLOAD] Expected Seq: %d, Got Seq: %d, adding to Early Arrivals Heap\n", recvBuf.nxt, tcpHeader.SeqNum)
+		/* add segment to early arrivals heap */
+		recvBuf.earlyArrivals.PushSegment(tcpHeader.SeqNum, payload)
 		recvBuf.mu.Unlock()
 		return nil
 	}
 
-	// // OLD -- pre circbuf
+	/* old/redundant segment -- seqNum of segment less than NXT - TODO technically we are supposed to discard payload and send an ack back*/
+	if tcpHeader.SeqNum < recvBuf.nxt {
+		fmt.Println("[TCP HANDLE PAYLOAD] Got redundant segment, dropping packet")
+		recvBuf.mu.Unlock()
+		return nil
+	}
 
-	// /* Now assume seqNum is what we expect: 
-	// 	convert seq nums to indices for copy */
-	// startCopy := recvBuf.nxt - recvBuf.base
-	// endCopy := startCopy + payLen
+	/* else, must be the segment number we're looking for */
 
-	/* TODO: check if there is space in buffer ----> replied below -Ben */
-	// note: as below, no check for exceeding bufsize bc sender won't send exceeding since sender-side logic handles with otherSideWindow
-
-	// copy(recvBuf.buf[startCopy:endCopy],payload[:payLen])
-	// recvBuf.currSize += payLen // no check for exceeding bufsize bc sender won't send exceeding since sender-side logic handles
-	
 	/* quick space check before writing -- shouldn't be neccesary if sender works right */
 	space := int(recvBuf.cBuf.FreeSpace())
+	if space == 0 {
+		fmt.Println("[TCP - handlePayload] Space in recv buffer is 0--should not be sending this packet")
+		recvBuf.mu.Unlock()
+		return nil
+	}
 	if len(payload) > space {
 		fmt.Printf("[TCP - handlePayload] ERROR: payload length longer than free space in recv buf! Sender side should now allow this. Writing truncated version of payload into recv buf")
 		payload = payload[:space]
@@ -295,17 +292,41 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 		return nil
 	}
 	
+	payLen := uint32(len(payload))
+	
 	recvBuf.nxt += payLen	/* next updated here! don't move lbr until READ() */
-	activeUpdatedSeqNum := tcpHeader.SeqNum+payLen
-	fmt.Printf("state: base=%d nxt=%d lbr=%d currSize=%d payLen=%d startCopy=%d\n", recvBuf.cBuf.baseSeq, recvBuf.nxt, recvBuf.lbr, recvBuf.cBuf.currSize, payLen)
 
-	/* print receive buffer for debugging */
+	/* drain early arrival heap of any segments that can now fit */
+	for {
+		min := recvBuf.earlyArrivals.Peek()
+		/* nothing in heap or min num is not our nxt pointer */
+		if min == nil || min.startSeq != recvBuf.nxt {
+			break
+		}
+		/* if not enough space in the recv buffer for full segment, just abandon ship 
+			TODO--verify if that is okay 
+			- this means we will advertise win=X where X < Max Segment Size
+			- sender will send another segment of that size and then ZWP will start so we're good */
+		space := int(recvBuf.cBuf.FreeSpace())
+		if len(min.data) > space {
+			break
+		}
+
+		/* actually take out minimum segment and write to recv buffer */
+		segment := recvBuf.earlyArrivals.PopMin()
+		numBytesWritten := recvBuf.cBuf.WriteIntoBuf(segment.startSeq, segment.data)
+		recvBuf.nxt += uint32(numBytesWritten)
+	}
+
+	/* ------ print receive buffer for debugging ----- */
+	fmt.Printf("state: base=%d nxt=%d lbr=%d currSize=%d payLen=%d\n", recvBuf.cBuf.baseSeq, recvBuf.nxt, recvBuf.lbr, recvBuf.cBuf.currSize, payLen)
 	fmt.Printf("copied bytes: %q\n", recvBuf.cBuf.SliceFrom(tcpHeader.SeqNum, payLen))
 	if recvBuf.cBuf.currSize > 0 {
 		fmt.Printf("entire readable region: %q\n",recvBuf.cBuf.SliceFrom(recvBuf.lbr+1, recvBuf.cBuf.currSize))
 	} else {
 		fmt.Printf("entire readable region: %q\n", []byte{})
 	}
+	/* ------------------------------------------------ */
 
 	recvBuf.mu.Unlock()
 
@@ -313,7 +334,7 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 	case recvBuf.dataToRead <- struct{}{}:
 	default:
 	}
-	entry.sendPureAck(activeUpdatedSeqNum)
+	entry.sendPureAck(recvBuf.nxt)
 	return nil
 }
 
@@ -326,7 +347,7 @@ func (entry *SocketTableEntry) sendPureAck(otherSideSeq uint32) error {
 		AckNum:        otherSideSeq,
 		DataOffset:    20,
 		Flags:         header.TCPFlagAck,
-		WindowSize:    uint16(MAX_WIN_SIZE - entry.normalSocket.recvBuf.cBuf.currSize),
+		WindowSize:    entry.normalSocket.recvBuf.getAvailableWindow(),
 		Checksum:      0,
 		UrgentPointer: 0,
 	}
@@ -348,10 +369,10 @@ func (entry *SocketTableEntry) sendSegment(segment []byte) error {
 		SrcPort:       entry.localPort,
 		DstPort:       entry.destPort,
 		SeqNum:        entry.seqNum,
-		AckNum:        entry.lastKnownAck, /* be sure to update this frequently */
+		AckNum:        entry.normalSocket.recvBuf.nxt,
 		DataOffset:    20,
 		Flags:         header.TCPFlagAck, /* data should be type ACK */
-		WindowSize:    uint16(MAX_WIN_SIZE - entry.normalSocket.recvBuf.cBuf.currSize),
+		WindowSize:    entry.normalSocket.recvBuf.getAvailableWindow(),
 		Checksum:      0,
 		UrgentPointer: 0,
 	}
@@ -410,7 +431,7 @@ func (entry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 		ackedBytes := seg.AckNum - sendBuf.una /* num bytes accounted for via this ACK */
 		sendBuf.una = seg.AckNum /* move UNA up */
 		/* adjust internals of circular buffer to reflect num bytes Acked */
-		sendBuf.cBuf.AdvanceBase(ackedBytes)
+		sendBuf.cBuf.AdvanceBase(ackedBytes)	
 	} else if seg.AckNum > sendBuf.nxt { // RFC: If the ACK acks something not yet sent (SEG.ACK > SND.NXT), then send an ACK, drop the segment, and return
 		// TODO: implement a sendPureAckForSender(). this is a bit of a pain, since sendPureAck() is for the recv side and thus we need a new version
 		fmt.Println("[TCP - handlePureAck] TODO, condition seg.AckNum > sendBuf.nxt, no fix implemented yet")
@@ -421,7 +442,6 @@ func (entry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 		fmt.Println("[TCP - handlePureAck] condition should not have been hit")
 		return nil
 	}
-
 	sendBuf.otherSideWindow = seg.WindowSize // update new window size
 	fmt.Printf("[TCP - handlePureAck] sender got new recvr window size: %d\n", sendBuf.otherSideWindow)
 	return nil
@@ -508,9 +528,14 @@ func (entry *SocketTableEntry) sendLoop() {
 	}
 }
 
-// tiny helper
+/* tiny helpers */
+
 func (sendBuf *SendBuf) getBytesInFlight() uint32 {
 	return sendBuf.nxt - sendBuf.una
+}
+
+func (recvBuf *RecvBuf) getAvailableWindow() uint16 {
+	return uint16(MAX_WIN_SIZE - recvBuf.cBuf.currSize - recvBuf.earlyArrivals.TotalDataLen())
 }
 
 

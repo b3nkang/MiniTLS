@@ -21,7 +21,7 @@ const (
 
 const (
 	MAX_WIN_SIZE = 65535
-	MAX_SEG_SIZE = 3
+	MAX_SEG_SIZE = 3  /* 1360 MAX, but we can choose whatever we want */
 )
 
 /* info about 1 socket in table */
@@ -130,10 +130,14 @@ type RecvBuf struct {
 	lbr uint32		/* last byte read (next byte that gets read when app calls read) */
 	nxt uint32		/* next sequence num expected */
 
+	/* min heap for early arrivals */
+	earlyArrivals *EarlyArrivals
+
 	/* channels */
 	dataToRead chan struct {}
 }
 
+/* circular buffer used in send/recv buf */
 type CircleBuf struct {
     buf []byte
     maxSize uint32
@@ -141,5 +145,16 @@ type CircleBuf struct {
     baseSeq  uint32
 	head int
 }
+
+/* obj stored in min heap for early arrivals */
+type EarlyArrival struct {
+	startSeq uint32
+	endSeq   uint32
+	data     []byte
+}
+
+/* min heap for early arrivals */
+type EarlyArrivals []*EarlyArrival
+
 
 

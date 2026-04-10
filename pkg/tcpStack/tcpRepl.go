@@ -2,6 +2,7 @@ package tcpstack
 
 import (
 	"fmt"
+	"io"
 	"net/netip"
 	"os"
 	"strconv"
@@ -19,7 +20,6 @@ func (tcp *TCPStack) HandleREPLCommands() {
 
 		/* accept: a <portNum> */
 		case "a":
-			fmt.Println("a command recognized in TCP")
 			if len(parts) < 2 {
 				fmt.Println("Usage: a <portNum>")
 				continue
@@ -93,6 +93,43 @@ func (tcp *TCPStack) HandleREPLCommands() {
 				continue
 			}
 			go tcp.rCommand(sID, numBytes)
+		/* receive file */
+		case "rf":
+			if len(parts) != 3 {
+				fmt.Println("Usage: rf <destFilePath> <portNum>")
+				continue
+			}
+			portInt, err := strconv.Atoi(parts[2])
+			if err != nil {
+				fmt.Println("Port must be an integer")
+				continue
+			}
+			if portInt < 0 || portInt > 65535 {
+				fmt.Println("Port must be a number 0-65535")
+				continue
+			}
+			go tcp.rfCommand(parts[1], portInt)
+		/* send file sf path/to/some_file 10.1.0.2 9999 */
+		case "sf":
+			if len(parts) != 4 {
+				fmt.Println("Usage: rf <srcFilePath> <Receiver IP> <Receiver PortNum>")
+				continue
+			}
+			portInt, err := strconv.Atoi(parts[3])
+			if err != nil {
+				fmt.Println("Port must be an integer")
+				continue
+			}
+			if portInt < 0 || portInt > 65535 {
+				fmt.Println("Port must be a number 0-65535")
+				continue
+			}
+			addr, err := netip.ParseAddr(parts[1])
+			if err != nil {
+				fmt.Println("Invalid IP Format: ", parts[1])
+				continue
+			}
+			go tcp.sfCommand(parts[1], addr, portInt)
 		case "ls":
 			tcp.socketTable.listSockets()
 		case "ps":
@@ -132,7 +169,7 @@ func (tcp *TCPStack) aCommand(port uint16) {
 	}
 
 	for {
-		fmt.Println("calling Accept, this will just block for now and not return")
+		fmt.Printf("Accepting connections on port %d\n", port)
 		conn, err := listener.VAccept()
 		if err != nil {
 			fmt.Println("Accept error:", err)
@@ -154,6 +191,10 @@ func (tcp *TCPStack) cCommand(addr netip.Addr, port uint16) {
 /* call VWrite after finding correct socket entry in table */
 func (tcp *TCPStack) sCommand(socketNum int, data []byte) {
 	socket := tcp.getNormalSocket(socketNum)
+	if socket == nil {
+		fmt.Printf("Cannot send to socket: %d\n", socketNum)
+		return
+	}
 	/* call VWrite */
 	bytesWritten, err := socket.VWrite(data)
 
@@ -181,6 +222,117 @@ func (tcp *TCPStack) rCommand(socketNum int, numBytes int) {
     }
 
     fmt.Printf("Read %d bytes: %s\n", bytesCopied, string(buf[:bytesCopied]))
+}
+
+/* receive file */
+/* rf path/to/some_destination_file 9999 */
+/* WILL NOT WORK because we don't return io.EOF when we get FIN */
+func (tcp *TCPStack) rfCommand(destFile string, portNum int) {
+	/* create listener */
+	listener, err := tcp.VListen(uint16(portNum))
+	if err != nil {
+		fmt.Println("Listen error:", err)
+		return
+	}
+
+	/* accept connection */
+	conn, err := listener.VAccept()
+	if err != nil {
+		fmt.Println("Accept error:", err)
+		return
+	}
+
+	/* make or open file */
+	file, err := os.Create(destFile)
+	if err != nil {
+		fmt.Println("Error creating file: ", err)
+		return
+	}
+
+	/* close file eventually */
+	defer file.Close()
+
+	/* read one page at a time */
+	buf := make([]byte, 4096)
+	
+	/* read file data sent to conn 
+		if VRead blocks until data is ready, how will 
+		we ever know if it's done?
+	*/
+	for {
+		/* read into buf */
+		numBytesRead, err := conn.VRead(buf)
+
+		/* check for EOF -> Read done (may need to move after writing data if we're
+			mirroring Go's pattern here) */
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			fmt.Println("Read error: ", err)
+			return
+		}
+
+		/* if we got data, put it in buffer */
+		if numBytesRead > 0 {
+			_, writeErr := file.Write(buf[:numBytesRead])
+			if writeErr != nil {
+				fmt.Println("File write error: ", writeErr)
+				return
+			}
+		}
+	}
+
+}
+
+/* write file */
+/* sf path/to/some_file 10.1.0.2 9999 */
+func (tcp *TCPStack) sfCommand(srcFile string, addr netip.Addr, portNum int) {
+	/* connect to receiver */
+    conn, err := tcp.VConnect(addr, uint16(portNum))
+    if err != nil {
+        fmt.Println("Connect error:", err)
+        return
+    }
+
+	/* write file */
+	file, err := os.Open(srcFile)
+	if err != nil {
+        fmt.Println("Open file error:", err)
+        return
+    }
+	defer file.Close()
+
+	/* need a buffer to read from file -> put that buf in VWrite */
+	buf := make([]byte, 4096) /* page size */
+	for {
+		bytesRead, readErr := file.Read(buf)
+
+		if readErr != nil && readErr != io.EOF {
+			fmt.Println("File read error: ", err)
+			return
+		}
+		if bytesRead > 0 {
+			bytesWritten, writeErr := conn.VWrite(buf)
+			if writeErr != nil {
+				fmt.Println("VWrite error:", writeErr)
+                return
+			}
+			if bytesWritten != bytesRead {
+				fmt.Printf("Error with VWrite: wrote only %d bytes instead of the full %d bytes read\n", bytesWritten, bytesRead)
+				return
+			}
+		}
+		/* written whole file -> check AFTER read because apparently in Go
+			Read() can return error EOF and bytes read */
+		if readErr == io.EOF {
+			break
+		}
+	}
+
+	/* TODO: close connection */
+	/* conn.VClose() */
+	return
 }
 
 /* list socket table */

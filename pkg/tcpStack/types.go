@@ -88,14 +88,6 @@ type VTCPConn struct {
 	packetChan chan []byte /* may not need? */
 	sendBuf 	*SendBuf
 	recvBuf		*RecvBuf
-
-	// send buffer
-	// receive buffer
-	// channel from VWrite to send buffer thread
-	// channel from handleTCP to receive buffer thread
-	// channel from recieve buffer thread to VRead
-
-	// 	- retransmission queue (later) (could also go in Conn) (will require third thread)
 }
 
 type SendBuf struct {
@@ -116,6 +108,7 @@ type SendBuf struct {
 	
 	/* channels */
 	dataWrittenToBuf chan struct{} 	/* tells thread that VWrite wrote data to buffer, tragically cannot pass straight bytes because VWrite needs to know num bytes written */
+	spaceAvailable chan struct{} 	/* tells VWrite that space has been freed in sendBuf if it's full */
 }
 
 type RecvBuf struct {

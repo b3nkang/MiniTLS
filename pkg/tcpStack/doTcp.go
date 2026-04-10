@@ -199,6 +199,7 @@ func (entry *SocketTableEntry) initBufs(otherSideSeq uint32) {
 	sendBuf := &SendBuf{
 		cBuf: sendCBuf,
 		dataWrittenToBuf: make(chan struct{}, 1),
+		spaceAvailable: make(chan struct{}, 1),
 		otherSideWindow: MAX_WIN_SIZE,
 	}
 	recvCBuf := NewCircleBuf(MAX_WIN_SIZE, otherSideSeq)
@@ -434,7 +435,12 @@ func (entry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 		ackedBytes := seg.AckNum - sendBuf.una /* num bytes accounted for via this ACK */
 		sendBuf.una = seg.AckNum /* move UNA up */
 		/* adjust internals of circular buffer to reflect num bytes Acked */
-		sendBuf.cBuf.AdvanceBase(ackedBytes)	
+		sendBuf.cBuf.AdvanceBase(ackedBytes)
+		/* tell sendBuf that there is space */	
+		select {
+		case sendBuf.spaceAvailable <- struct{}{}:
+		default:
+		}
 	} else if seg.AckNum > sendBuf.nxt { // RFC: If the ACK acks something not yet sent (SEG.ACK > SND.NXT), then send an ACK, drop the segment, and return
 		// TODO: implement a sendPureAckForSender(). this is a bit of a pain, since sendPureAck() is for the recv side and thus we need a new version
 		fmt.Println("[TCP - handlePureAck] TODO, condition seg.AckNum > sendBuf.nxt, no fix implemented yet")

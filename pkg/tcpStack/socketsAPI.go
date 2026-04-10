@@ -120,69 +120,59 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
     }
 }
 
-/* returns bytes written (or error) */
+/* returns bytes written (or error) -- block until all bytes written */
 func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 	/* give the data to the conn's sendbuf data channel */
-	conn.sendBuf.mu.Lock()
-	defer conn.sendBuf.mu.Unlock()
-
 	sendBuf := conn.sendBuf
+	totalBytesWritten := 0
 
-	/* write data to buffer--only as much as fits */
-	// /* TODO: CHANGE THIS FOR CIRCULAR BUF */
-	// spaceInBuf := MAX_WIN_SIZE - (buf.lbw + 1) /* say last byte written is 0 and size is 5: 5-0 = 5 but we want 4 so (lbw + 1) */
-	// if spaceInBuf <= 0 {
-	// 	fmt.Println("No space in buffer. Returning for now...eventually deal with this")
-	// 	return 0, nil
-	// }
-	spaceInBuf := sendBuf.cBuf.FreeSpace()
-	if spaceInBuf == 0 {
-		fmt.Println("[TCP - VWrite] no space in send buffer")
-		return 0, nil
-	}
-	
-	/* truncate bytes to fit in buffer if necessary */
-	numBytesToWrite := len(data)
-	if numBytesToWrite > int(spaceInBuf) {
-		numBytesToWrite = int(spaceInBuf)
-	}
+	/* keep track of how long we need to keep looping (wait for more space in buf as necessary) */
+	for totalBytesWritten < len(data) {
+		conn.sendBuf.mu.Lock()
+		spaceInBuf := sendBuf.cBuf.FreeSpace()
 
-	/* write bytes to buffer */
-	/* NOTE: when we switch to circular buffer, we cannot do this--need a loop to write one byte at a time -- should 
-		just make that a function of the circular buffer struct though */
-
-	fmt.Printf("[TCP - VWrite] send buf size before write: %d\n", sendBuf.cBuf.currSize)
+		/* Per handout: This method MUST block until all bytes are in the send buffer.
+		If the send buffer becomes full, VWrite should block until space is available. */
+		if spaceInBuf == 0 {
+			/* unlock mutex so buf can be filled */
+			sendBuf.mu.Unlock()
+			fmt.Println("[TCP - VWrite] no space in send buffer, waiting for space to be available")
+			<- sendBuf.spaceAvailable /* block on this channel */
+			continue
+		}
 		
-	// // // Old pre-circbuf
-	// // start := int(buf.lbw + 1 - buf.base)
-	// // copy(buf.buf[start:], data[:numBytesToWrite])
-	// // buf.currSize += uint32(numBytesToWrite)
-	// /* update lbw */
-	// buf.lbw += uint32(numBytesToWrite) /* TODO: update with circular buffer */
-	sendBuf.cBuf.WriteIntoBuf(sendBuf.lbw+1, data[:numBytesToWrite])
-	start:= sendBuf.lbw+1
-	sendBuf.lbw += uint32(numBytesToWrite)
+		/* truncate bytes to fit in buffer if necessary */
+		numBytesToWrite := len(data) - totalBytesWritten
+		if numBytesToWrite > int(spaceInBuf) {
+			numBytesToWrite = int(spaceInBuf)
+		}
+		fmt.Printf("[TCP - VWrite] send buf size before write: %d\n", sendBuf.cBuf.currSize)
+			
+		sendBuf.cBuf.WriteIntoBuf(sendBuf.lbw+1, data[:numBytesToWrite])
+		start:= sendBuf.lbw+1
+		sendBuf.lbw += uint32(numBytesToWrite)
+		totalBytesWritten += numBytesToWrite
 
-	fmt.Printf("[TCP - VWrite] send buf size after write: %d\n",sendBuf.cBuf.currSize)
-	fmt.Printf("[TCP - VWrite] data written to send buf: %q\n",sendBuf.cBuf.SliceFrom(start, uint32(numBytesToWrite)))
+		sendBuf.mu.Unlock()
 
-	/* tell sending thread we put stuff in buffer 
-		apparently (according to chat, we want this kinda weird structure)
-		this will only signal to this channel if it ISN'T full
-		if we did: buf.dataWrittenToBuf <- struct{}{} without the select/case/default situation,
-		it would block and we'd hold this mutex. if the channel is already full
-		i.e. someone else wrote to it, we could cause deadlock.
-		if the channel is full, the sender will check the buffer anyway and our data will be sent.
-		at least that's the idea...? */
-	select {
-	case sendBuf.dataWrittenToBuf <- struct{}{}:
-	default:
+		fmt.Printf("[TCP - VWrite] send buf size after write: %d\n",sendBuf.cBuf.currSize)
+		fmt.Printf("[TCP - VWrite] data written to send buf: %q\n",sendBuf.cBuf.SliceFrom(start, uint32(numBytesToWrite)))
+
+		select {
+		case sendBuf.dataWrittenToBuf <- struct{}{}:
+		default:
+		}
 	}
 
-	return numBytesToWrite, nil
+
+	return totalBytesWritten, nil
 }
 
 // TODO: returning numBytesRead for now but check if right -- that is right
+/* TODO : "VRead MUST return number of bytes read into the buffer. 
+The returned error is nil on success, io.EOF if other side of 
+connection has finished, or another error describing other failure cases.
+*/
 func (conn *VTCPConn) VRead(buf []byte) (int, error) {
 	/* loop so that we block until data is ready */
     for {

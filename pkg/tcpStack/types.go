@@ -4,6 +4,8 @@ import (
 	"ip-isabelle-and-ben/pkg/ipStack"
 	"net/netip"
 	"sync"
+
+	"github.com/google/netstack/tcpip/header"
 )
 
 /* Represent states
@@ -15,6 +17,11 @@ const (
     SYN_RECEIVED
     ESTABLISHED
 	ERROR /* just made this for 3-way handshake */
+)
+
+const (
+	MAX_WIN_SIZE = 65535
+	MAX_SEG_SIZE = 3  /* 1360 MAX, but we can choose whatever we want */
 )
 
 /* info about 1 socket in table */
@@ -29,6 +36,7 @@ type SocketTableEntry struct {
 
 	/* header stuff */
 	seqNum 			uint32
+	lastKnownAck	uint32
 
 	/* store a socket (either normal or listener) */
 	normalSocket	*VTCPConn
@@ -37,6 +45,9 @@ type SocketTableEntry struct {
 	/* for telling initial sender that connection has been established
 		after 3-way handshake */
 	establishedChan chan int
+
+	/* for sending packets without exposing whole tcpStack */
+	sendPacketFunc	func(request *SendRequest) /* use to send packets from tcpStack */
 }
 
 /* 1 per host: stores all info about open sockets 
@@ -50,10 +61,19 @@ type SocketTable struct {
 	mu 				sync.Mutex 	 /* necessary to protect table */
 }
 
-/* tragic but yeah gotta have this too */
 type TCPStack struct {
 	socketTable 	*SocketTable
 	ipStack			*ipStack.IPStack
+
+	sendRequests 	chan *SendRequest /* channel for conns to send packets they want sent out */
+}
+
+/* sent from a Conn/tableEntry to the tcp stack to send out packets */
+type SendRequest struct {
+	tcpHeader 	*header.TCPFields
+	data 		[]byte
+	sourceIP 	netip.Addr
+	destIP 		netip.Addr
 }
 
 /* listener socket object */
@@ -65,33 +85,69 @@ type VTCPListener struct {
 
 /* actual "normal socket" object */
 type VTCPConn struct {
-	packetChan chan []byte
-
-	// send buffer
-	// receive buffer
-	// channel from VWrite to send buffer thread
-	// channel from handleTCP to receive buffer thread
-	// channel from recieve buffer thread to VRead
-
-	// 	- retransmission queue (later) (could also go in Conn) (will require third thread)
-
+	packetChan chan []byte /* may not need? */
+	sendBuf 	*SendBuf
+	recvBuf		*RecvBuf
 }
 
-/* send buffer struct
-	- actual buffer
+type SendBuf struct {
+	// buf []byte 		/* simple normal array for now */
+	// currSize uint32	/* curr amt of data in buf */	
+	cBuf *CircleBuf
 
-	- pointers into buffer
+	mu sync.Mutex 	/* mutex for buffer */
+	base uint32 	/* sequence num at index=0 */
+
+	/* pointers */
+	nxt uint32 				/* nxt byte to send */
+	lbw uint32 				/* last byte written to buf (from app) */	
 	
-	- our available window size
-	- 
-*/
+	// // NOTE: so I tried to make it work without UNA field and we still need a way to track bytes in flight and UNA actually does a better job than some bytesinflight var so gonna roll with UNA for now. TODO: revisit question after mstone2
+	una uint32			/* earliest-sent, but still un-ACKed byte */ //maybe use later? Ben: if we're going to enqueue in-flight with some data structure, no need TODO: revisit question after mstone2
+	otherSideWindow uint16 	/* the amount which the other's recv buf (NOT OURS, the OTHER party we are connected with) can receive. used in handlePureAck() */
+	
+	/* channels */
+	dataWrittenToBuf chan struct{} 	/* tells thread that VWrite wrote data to buffer, tragically cannot pass straight bytes because VWrite needs to know num bytes written */
+	spaceAvailable chan struct{} 	/* tells VWrite that space has been freed in sendBuf if it's full */
+}
 
-/* receive buffer struct
-	- actual buffer
-	- min heap for early arrivals
-	- pointers into buffer
+type RecvBuf struct {
+	// buf []byte		/* simple normal array for now */
+	// currSize uint32	/* curr amt of data in buf */
+	cBuf *CircleBuf
 
-*/
+	mu sync.Mutex 	/* mutex between incoming packet logic and vread */
+	// base uint32 	/* sequence num at index=0*/ --> in circleBuf now
+
+	/* pointers */
+	lbr uint32		/* last byte read (next byte that gets read when app calls read) */
+	nxt uint32		/* next sequence num expected */
+
+	/* min heap for early arrivals */
+	earlyArrivals *EarlyArrivals
+
+	/* channels */
+	dataToRead chan struct {}
+}
+
+/* circular buffer used in send/recv buf */
+type CircleBuf struct {
+    buf []byte
+    maxSize uint32
+    currSize uint32
+    baseSeq  uint32
+	head int
+}
+
+/* obj stored in min heap for early arrivals */
+type EarlyArrival struct {
+	startSeq uint32
+	endSeq   uint32
+	data     []byte
+}
+
+/* min heap for early arrivals */
+type EarlyArrivals []*EarlyArrival
 
 
 

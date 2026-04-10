@@ -33,3 +33,6 @@ refhost-loop:
 
 ourhost-loop:
 	util/vnet_run --host ./vhost --router ./reference/arm64/vrouter loop
+
+net:
+	util/vnet_generate nets/$(NET).json $(NET)

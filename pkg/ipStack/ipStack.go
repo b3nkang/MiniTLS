@@ -147,7 +147,6 @@ func (ipStack *IPStack) SendIP(finalDest netip.Addr, message []byte, protoNum in
 		} else {
 			nextDestAsUDPAddr := net.UDPAddrFromAddrPort(nextDestAsNeighbour.UDPAddr)
 			// brand new send, so specify new TTL
-			fmt.Printf("[IP] in SendIP, protoNum being passed to SerializePacket: %d\n", protoNum)
 			bytesToSend := SerializePacket(iface.IP, finalDest, []byte(message), protoNum, 0, true)
 			iface.LinkLayerSend(nextDestAsUDPAddr, bytesToSend)
 		}
@@ -210,7 +209,6 @@ func (ipStack *IPStack) ipForwarding(hdr *ipv4header.IPv4Header, message []byte)
 		if iface.IP == finalDest {
 			// fmt.Printf("[IP] packet destination reached on interface %s\n", iface.Name)
 			destFound = true
-			fmt.Printf("[IP] destination reached--packet protocol: %d\n", hdr.Protocol)
 			/* call correct receive handler */
 			receiveHandler, exists := ipStack.recvHandlers[hdr.Protocol]
 			if !exists {
@@ -252,19 +250,19 @@ func (ipStack *IPStack) ipForwarding(hdr *ipv4header.IPv4Header, message []byte)
 	// decrement TTL
 	hdr.TTL -= 1
 	if hdr.TTL <= 0 {
-		fmt.Printf("[IP] pre-decrement TTL expired, dropping packet\n> ")
+		fmt.Printf("[IP] pre-decrement TTL expired, dropping packet\n ")
 		return
 	}
 	// longest prefix match
 	entry, nextDest, found := ipStack.LongestPrefixMatch(finalDest)
 	if !found {
-		fmt.Printf("[IP] No match on LongestPrefixMatch in FwdTable, dropping packet\n> ")
+		fmt.Printf("[IP] No match on LongestPrefixMatch in FwdTable, dropping packet\n ")
 		return
 	}
 
 	// if cost is infinity, the route is offline, so drop
 	if entry.Cost >= Infinity {
-		fmt.Printf("[IP] Entry in FwdTable found, but cost was %d, >= INF. Dropping packet...\n> ", entry.Cost)
+		fmt.Printf("[IP] Entry in FwdTable found, but cost was %d, >= INF. Dropping packet...\n ", entry.Cost)
 		return
 	}
 
@@ -283,7 +281,6 @@ func (ipStack *IPStack) ipForwarding(hdr *ipv4header.IPv4Header, message []byte)
 
 			nextDestAsNeighbour := iface.Neighbours[nextDest]
 			if nextDestAsNeighbour == nil {
-				// fmt.Printf("[IP] Entry in FwdTable found, LOCAL case, but neighbor <%s> doesn't exist. Dropping packet...\n> ", nextDest.String())
 				return
 			}
 			/* get neighbor's UDP address */
@@ -294,9 +291,8 @@ func (ipStack *IPStack) ipForwarding(hdr *ipv4header.IPv4Header, message []byte)
 		case SourceTypeRIP:
 			fmt.Println("[IP] BAD THING HAPPENED THIS SHOULDN'T HAPPEN hit SourceTypeRIP case in IPForwarding")
 		default:
-			fmt.Printf("[IP] Found a match but could not send, bad entry type. Error should not happen. Dropping packet...\n> ")
+			fmt.Printf("[IP] Found a match but could not send, bad entry type. Error should not happen. Dropping packet...\n ")
 	}
-	fmt.Printf("> ")
 }
 
 // returns the FwdEntry and dest netIPAddr with the longest prefix match and true. if none, bool return value is false
@@ -343,7 +339,6 @@ func SerializePacket(source netip.Addr, dest netip.Addr, message []byte, protoco
 		Dst:      dest,
 		Options:  []byte{},
 	}
-	fmt.Printf("[IP] in SerializePacket, protoNum stored in header: %d\n", hdr.Protocol)
 	if !isTtlNew {
 		hdr.TTL = ttl
 	}

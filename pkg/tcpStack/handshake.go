@@ -152,11 +152,19 @@ func (tcp *TCPStack) handleSynAck(tableEntry *SocketTableEntry, tcpHeader header
 		we expect, so should also be what we use to initially set recv.NXT */
 	// note per RFC - technically bufs are supposed to be init'd much earlier for coverage of weird edge cases (e.g. simulataneous open) that we don't need to worry about
 	tableEntry.initBufs(tcpHeader.SeqNum + 1) 
+
 	// handle storing the initial max window we get for the receiver into the new sendBuf
 	sendBuf := tableEntry.normalSocket.sendBuf
 	sendBuf.mu.Lock() // don't think this is technically needed but why not
 	sendBuf.otherSideWindow = tcpHeader.WindowSize
 	sendBuf.mu.Unlock()
+
+	tableEntry.normalSocket.retransQueue = &RetransmissionQueue{
+		head: 0,
+		array: make([]*RetransmissionEntry, 0), // let grow dyna,ically with append
+		rto: RTO_INIT, // refer to types comment
+		// other fields can be null for now
+	}
 
 	table.mu.Unlock() /* UNLOCK MUTEX BEFORE CALLING SENDACK */
 	tableEntry.sendAckHandshake(tcpHeader.SeqNum) /* passing in THEIR sequence num to ACK */
@@ -218,7 +226,12 @@ func (tcp *TCPStack) handleAckHandshake(tableEntry *SocketTableEntry, tcpHeader 
 	// note per RFC - technically bufs are supposed to be init'd much earlier for coverage of weird edge cases (e.g. simulataneous open) that we don't need to worry about
 	tableEntry.initBufs(tcpHeader.SeqNum)
 
-	// TODO: init min heap here for early arrivals
+	// init retransqueue, keep all other fields null for now
+	tableEntry.normalSocket.retransQueue = &RetransmissionQueue{
+		head: 0,
+		array: make([]*RetransmissionEntry, 0),
+		rto: RTO_INIT, // refer to types comment
+	}
 
 	table.mu.Unlock() /* UNLOCK MUTEX BEFORE PASSING SOCKET */
 	tableEntry.listenSocket.connChan <- tableEntry.normalSocket // unblock vconnnect

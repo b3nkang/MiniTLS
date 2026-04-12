@@ -4,6 +4,7 @@ import (
 	"ip-isabelle-and-ben/pkg/ipStack"
 	"net/netip"
 	"sync"
+	"time"
 
 	"github.com/google/netstack/tcpip/header"
 )
@@ -20,8 +21,23 @@ const (
 )
 
 const (
-	MAX_WIN_SIZE = 65535
-	MAX_SEG_SIZE = 3  /* 1360 MAX, but we can choose whatever we want */
+	MAX_WIN_SIZE = 15
+	MAX_SEG_SIZE = 1000  /* 1360 MAX, but we can choose whatever we want */
+)
+
+// for RTO and SRTT calculations
+// initial values taken from slides
+const (
+	RTO_MIN = 100 		// in milliseconds
+	RTO_MAX = 5000		// in milliseconds
+	RTO_INIT = 1000		// in milliseconds, 
+						// RFC 6298 (2.1): 
+						// 		Until a round-trip time (RTT) measurement has been made for a
+						//		segment sent between the sender and receiver, the sender SHOULD
+						//		set RTO <- 1 second, though the "backing off" on repeated
+						// 		retransmission discussed in (5.5) still applies
+	RTO_ALPHA = 0.85
+	RTO_BETA = 1.65
 )
 
 /* info about 1 socket in table */
@@ -86,8 +102,9 @@ type VTCPListener struct {
 /* actual "normal socket" object */
 type VTCPConn struct {
 	packetChan chan []byte /* may not need? */
-	sendBuf 	*SendBuf
-	recvBuf		*RecvBuf
+	sendBuf 		*SendBuf
+	recvBuf			*RecvBuf
+	retransQueue	*RetransmissionQueue
 }
 
 type SendBuf struct {
@@ -124,7 +141,7 @@ type RecvBuf struct {
 	nxt uint32		/* next sequence num expected */
 
 	/* min heap for early arrivals */
-	earlyArrivals *EarlyArrivals
+	earlyArrivals *EarlyArrivals // TODO: nit but i think this makes more sense at the conn level but thats just nitpick oop design
 
 	/* channels */
 	dataToRead chan struct {}
@@ -139,6 +156,7 @@ type CircleBuf struct {
 	head int
 }
 
+// ---------------- EARLY ARRIVALS ---------------
 /* obj stored in min heap for early arrivals */
 type EarlyArrival struct {
 	startSeq uint32
@@ -149,5 +167,27 @@ type EarlyArrival struct {
 /* min heap for early arrivals */
 type EarlyArrivals []*EarlyArrival
 
+
+// -------------- RETRANSMISSIONS --------------
+type RetransmissionEntry struct {
+	seqNum uint32
+	len uint32				// length of data segment sent (so we know what slice between nxt-una to send)
+	sent time.Time
+	retransmitted bool		// a flag for if the entry has been retransmitted. if so, we don't use to update RTT (Karn's)
+							// RFC 6298: 
+							// 		TCP MUST use Karn's algorithm [KP87] for taking RTT samples.  That
+							// 		is, RTT samples MUST NOT be made using segments that were
+							//		retransmitted (and thus for which it is ambiguous whether the reply
+							// 		was for the first instance of the packet or a later instance).
+}
+
+type RetransmissionQueue struct {
+	mu sync.Mutex 					// since we might be sending + getting ack concurrently
+	head uint32 					// TODO: might not be necessary since slice[1:] should be constant...amortized?
+	array []*RetransmissionEntry
+	rto time.Duration				// all times are in MILLISECONDS
+	srtt time.Duration				// used to calculate an updated srtt for each new pureack
+	timer *time.Timer				// a countdown for RTO for when we know to retransmit
+}
 
 

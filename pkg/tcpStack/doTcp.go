@@ -44,6 +44,7 @@ import (
 	utils "ip-isabelle-and-ben/pkg/protocol"
 	"net/netip"
 	"strings"
+	"time"
 
 	ipv4header "github.com/brown-csci1680/iptcp-headers"
 	"github.com/google/netstack/tcpip/header"
@@ -422,8 +423,8 @@ window
 // 		currently, this consists of:
 //			- sendBuf.otherSideWindow, tracking of the other side's available window size
 // 			- sendBuf.una, we may want to use an enqueue-inflight-data structure for retrans but for now it is needed (TODO: revisit)
-func (entry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
-	sendBuf := entry.normalSocket.sendBuf
+func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
+	sendBuf := socketEntry.normalSocket.sendBuf
 	sendBuf.mu.Lock()
 	defer sendBuf.mu.Unlock()
 
@@ -446,6 +447,7 @@ func (entry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 		fmt.Println("[TCP - handlePureAck] TODO, condition seg.AckNum > sendBuf.nxt, no fix implemented yet")
 		return nil
 	} else if seg.AckNum <= sendBuf.una { // RFC: If the ACK is a duplicate (SEG.ACK =< SND.UNA), it can be ignored.
+		// we also don't need to update retransQueue since the out-of-order segment will have sliced this segment off already
 		return nil
 	} else {
 		fmt.Println("[TCP - handlePureAck] condition should not have been hit")
@@ -549,8 +551,29 @@ func (recvBuf *RecvBuf) getAvailableWindow() uint16 {
 }
 
 
+func (retransEntry *RetransmissionEntry) getRtt() time.Duration {
+	return time.Since(retransEntry.sent)
+}
 
+// TODO: double check there is no issue with the consts all being in milliseconds
+// slides formula: SRTT = (⍺ * SRTTLast) + (1 - ⍺)* RTTMeasured
+func (retransQueue *RetransmissionQueue) computeNewSrtt(rtt time.Duration) time.Duration {
+	if retransQueue.srtt == 0 {
+        retransQueue.srtt = rtt
+    } else {
+        retransQueue.srtt = time.Duration(RTO_ALPHA*float64(retransQueue.srtt) + (1-RTO_ALPHA)*float64(rtt))
+    }
+	return retransQueue.srtt
+}
 
+// TODO: double check there is no issue with the consts all being in milliseconds
+// slides formula: RTO = max(RTOMin, min(β * SRTT, RTOMax))
+func (retransQueue *RetransmissionQueue) updateRto(rtt time.Duration) error {
+	retransQueue.rto = time.Duration(max(RTO_MIN, min(RTO_BETA*float64(retransQueue.computeNewSrtt(rtt)),RTO_MAX)))
+	return nil
+}
+
+// TODO: delete these functions and the repl command associated
 /* ----------------------PRINTING (NON-CIRCL BUF, OBSOLETE NOW------------------*/
 type BufPointer struct {
 	seq  uint32

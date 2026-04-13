@@ -550,6 +550,44 @@ func (recvBuf *RecvBuf) getAvailableWindow() uint16 {
 	return uint16(MAX_WIN_SIZE - recvBuf.cBuf.currSize)
 }
 
+// highest-level RTO countdown function. calls retransmitSegment if timer expires
+func (entry *SocketTableEntry) startRtoTimer() *time.Timer {
+	// TODO: double check if mutex lock is necessary here. i believe not since this should only be called where mtx is locked
+	return time.AfterFunc(entry.normalSocket.retransQueue.rto, func(){entry.retransmitSegment()})
+}
+
+// retransmit the segment. called by timer.afterFunc to start the countdown on RTO
+func (entry *SocketTableEntry) retransmitSegment() error {
+	retransQueue := entry.normalSocket.retransQueue
+	retransQueue.mu.Lock()
+	defer retransQueue.mu.Unlock()
+
+	// When RTO timer expires Retransmit earliest unACK’d segment
+	segmentToResend := retransQueue.array[0]
+
+	// update to true per RFC 6298 sec 3 (on Karns) to avoid updating RTO on ack of this segment
+	segmentToResend.retransmitted = true
+
+	// actually send
+	cBuf := entry.normalSocket.sendBuf.cBuf
+	err := entry.sendSegment(cBuf.SliceFrom(segmentToResend.seqNum,segmentToResend.len))
+	if err != nil {
+		fmt.Println("[TCP - RetransmitSegment] Error sending segment")
+		return errors.New("[TCP - RetransmitSegment] bad nested entry.sendSegment call")
+	}
+
+	// update RTO
+	rto := entry.normalSocket.retransQueue.rto 
+	entry.normalSocket.retransQueue.rto = min(rto * 2, RTO_MAX) //  RFC 6298 (5.5):
+																// 		The host MUST set RTO <- RTO * 2 ("back off the timer").  The
+																//  	maximum value discussed in (2.5) above may be used to provide
+																//  	an upper bound to this doubling operation.
+
+	// start the timer again, recursive call
+	retransQueue.timer = entry.startRtoTimer()
+	//	TODO: pretty sure this is expected behavior for it to spin forever waiting for an ack for a retransmission at RTO_MAX in worst case
+	return nil
+}
 
 func (retransEntry *RetransmissionEntry) getRtt() time.Duration {
 	return time.Since(retransEntry.sent)

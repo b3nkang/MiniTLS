@@ -437,6 +437,58 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 		sendBuf.una = seg.AckNum /* move UNA up */
 		/* adjust internals of circular buffer to reflect num bytes Acked */
 		sendBuf.cBuf.AdvanceBase(ackedBytes)
+
+		// --------------- retransmission queue updates ------------------
+		//	RFC 6298 (5):
+		//    An implementation MUST manage the retransmission timer(s) in such a
+		//    way that a segment is never retransmitted too early, i.e., less than
+		//    one RTO after the previous transmission of that segment.
+
+		//    The following is the RECOMMENDED algorithm for managing the
+		//    retransmission timer:
+
+		//    (5.1) Every time a packet containing data is sent (including a
+		//          retransmission), if the timer is not running, start it running
+		//          so that it will expire after RTO seconds (for the current value
+		//          of RTO).
+
+		//    (5.2) When all outstanding data has been acknowledged, turn off the
+		//          retransmission timer.
+
+		//    (5.3) When an ACK is received that acknowledges new data, restart the
+		//          retransmission timer so that it will expire after RTO seconds
+		//          (for the current value of RTO).
+
+		retransQueue := socketEntry.normalSocket.retransQueue
+		retransQueue.mu.Lock()
+
+		// stop the timer since we just got something ack'd
+		retransQueue.timer.Stop()
+
+		var ackedEntry *RetransmissionEntry
+		// update queue head: pop from head repeatedly until we get the segement we just ack'd popped
+		for len(retransQueue.array) > 0 && retransQueue.array[0].seqNum + retransQueue.array[0].len <= seg.AckNum {
+			ackedEntry = retransQueue.array[0] // we need entry's .sent time field to calculate RTT
+			// the ack is still ahead of the head of the queue, keep popping
+			retransQueue.array = retransQueue.array[1:]
+		}
+
+		// update RTO
+		if ackedEntry != nil && !ackedEntry.retransmitted { // if duplicate ack, ackedEntry will be null, and if retrans we don't want to update (Karn's)
+			err := retransQueue.updateRto(ackedEntry.getRtt())
+			if err != nil {
+				fmt.Println("[TCP - handlePureAck] error: update RTO failed")
+			}
+		}
+
+		// 5.2: if the queue is now empty, we stop and do nothing (we previously stopped it earlier in this function)
+		// 5.3: if queue still has data in flight (entries), then restart the timer
+		if len(retransQueue.array) > 0 {
+			socketEntry.startRtoTimer()
+		}
+
+		retransQueue.mu.Unlock()
+
 		/* tell sendBuf that there is space */	
 		select {
 		case sendBuf.spaceAvailable <- struct{}{}:

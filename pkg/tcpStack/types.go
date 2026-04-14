@@ -42,6 +42,8 @@ const (
 
 /* info about 1 socket in table */
 type SocketTableEntry struct {
+	dropForRetrans bool
+	
 	/* 4-tuple stuff */
 	localPort 		uint16
 	localIP			netip.Addr

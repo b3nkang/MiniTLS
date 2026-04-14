@@ -252,6 +252,13 @@ RCV.NXT =< SEG.SEQ+SEG.LEN-1 < RCV.NXT+RCV.WND
 */
 func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload []byte) error {
 	fmt.Println("Packet being handled by receiver in handlePayload")
+
+	// flag is flipped to get recvr to drop all packets for the purpose of testing retransmissions
+	if entry.dropForRetrans {
+		fmt.Println("[TCP - handlePayload] flag dropForRetrans = true, DROPPING SEGMENT")
+		return nil
+	}
+
 	// prior logic already handles empty payloads, assume len(payload) > 0
 	recvBuf := entry.normalSocket.recvBuf
 
@@ -475,6 +482,7 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 
 		// update RTO
 		if ackedEntry != nil && !ackedEntry.retransmitted { // if duplicate ack, ackedEntry will be null, and if retrans we don't want to update (Karn's)
+			fmt.Println("[TCP - handlePureAck] RTO: updating RTO given new recvd ack")
 			err := retransQueue.updateRto(ackedEntry.getRtt())
 			if err != nil {
 				fmt.Println("[TCP - handlePureAck] error: update RTO failed")
@@ -484,6 +492,7 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 		// 5.2: if the queue is now empty, we stop and do nothing (we previously stopped it earlier in this function)
 		// 5.3: if queue still has data in flight (entries), then restart the timer
 		if len(retransQueue.array) > 0 {
+			fmt.Println("[TCP - handlePureAck] 5.3 RTO: still data in flight, restarting timer")
 			socketEntry.startRtoTimer()
 		}
 
@@ -596,6 +605,7 @@ func (entry *SocketTableEntry) sendLoop() {
 			//          so that it will expire after RTO seconds (for the current value
 			//          of RTO).
 			if len(retransQueue.array) == 0 {
+				fmt.Println("[TCP - sendloop] RTO: timer was stopped/set to 0; restarting")
 				retransQueue.timer = entry.startRtoTimer()
 			}
 			
@@ -644,7 +654,9 @@ func (entry *SocketTableEntry) retransmitSegment() error {
 
 	// actually send
 	cBuf := entry.normalSocket.sendBuf.cBuf
-	err := entry.sendSegment(cBuf.SliceFrom(segmentToResend.seqNum,segmentToResend.len))
+	sliceToSend := cBuf.SliceFrom(segmentToResend.seqNum,segmentToResend.len)
+	fmt.Printf("[TCP - retransmitSegment] re-transmitting head of RQ, contents: [ %s ]\n",string(sliceToSend))
+	err := entry.sendSegment(sliceToSend)
 	if err != nil {
 		fmt.Println("[TCP - RetransmitSegment] Error sending segment")
 		return errors.New("[TCP - RetransmitSegment] bad nested entry.sendSegment call")

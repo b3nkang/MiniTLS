@@ -58,14 +58,6 @@ func (tcp *TCPStack) HandleREPLCommands() {
 			}
 			port := uint16(portInt)
 			go tcp.cCommand(addr, port) // so REPL dont block
-
-			// TODO::: bug when port doesn't exist -
-			// panic: runtime error: invalid memory address or nil pointer dereference
-			// [segmentation violation code=0x1 addr=0x40 pc=0x154a0c]
-			// goroutine 8 [running]:
-			// ip-isabelle-and-ben/pkg/tcpStack.(*TCPStack).HandleTCP(0x4000011440, 0x40003260a0, {0x40000a2014, 0x14, 0x564})
-			// 		/home/cs1680-user/tcp-big-chungus-1/pkg/tcpStack/doTcp.go:85 +0x46c
-			// ip-isabelle-and-ben/pkg/ipStack.(*IPStack).ipForwarding(0x400007a4e0, 0x40003260a0, {0x40000a2014, 0x14, 0x5
 		case "s":
 			if len(parts) != 3 {
 				fmt.Println("Usage: s <socketID> <bytes>")
@@ -132,6 +124,28 @@ func (tcp *TCPStack) HandleREPLCommands() {
 			go tcp.sfCommand(parts[1], addr, portInt)
 		case "ls":
 			tcp.socketTable.listSockets()
+		case "d":
+			if len(parts) != 2 {
+				fmt.Println("Usage: d <socketID>")
+				continue
+			}
+			sID, err := strconv.Atoi(parts[1])
+			if err != nil {
+				fmt.Println("Socket ID must be an integer")
+				continue
+			}			
+			tcp.dCommand(sID)
+		case "prq":
+			if len(parts) != 2 {
+				fmt.Println("Usage: prq <socketID>")
+				continue
+			}
+			sID, err := strconv.Atoi(parts[1])
+			if err != nil {
+				fmt.Println("Socket ID must be an integer")
+				continue
+			}			
+			tcp.prqCommand(sID)
 		case "ps":
 			if len(parts) != 2 {
 				fmt.Println("Usage: ps <socketID>")
@@ -334,6 +348,38 @@ func (tcp *TCPStack) sfCommand(srcFile string, addr netip.Addr, portNum int) {
 	/* conn.VClose() */
 	return
 }
+
+// command for testing retransmissions by configuring the host to drop all packets in handlePayload()
+func (tcp *TCPStack) dCommand(socketNum int) {
+	entry := tcp.socketTable.socketMap[socketNum]
+	if entry == nil {
+		fmt.Printf("Cannot read from socket: %d\n", socketNum)
+		return
+	}
+	if entry.dropForRetrans {
+		fmt.Printf("set entry.dropForRetrans = FALSE, accepting packets now\n")
+		entry.dropForRetrans = false
+	} else {
+		fmt.Printf("set entry.dropForRetrans = TRUE, dropping packets now \n")
+		entry.dropForRetrans = true
+	}
+}
+
+// prq = print retransmission queue
+func (tcp *TCPStack) prqCommand(socketNum int) {
+	conn := tcp.getNormalSocket(socketNum)
+	array := conn.retransQueue.array
+	seqs := make([]uint32, 0, len(array))
+	for _, entry := range array {
+		if entry != nil {
+			seqs = append(seqs, entry.seqNum)
+		} else {
+			seqs = append(seqs, 0) // placeholder
+		}
+	}
+	fmt.Println(seqs)
+}
+
 
 /* list socket table */
 func (table *SocketTable) listSockets() {

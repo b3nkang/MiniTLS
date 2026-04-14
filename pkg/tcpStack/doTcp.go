@@ -528,6 +528,28 @@ func (entry *SocketTableEntry) sendLoop() {
 				break
 			}
 
+			// add to retransmission queue
+			segmentRetransEntry := &RetransmissionEntry{
+				seqNum: entry.seqNum,
+				len: uint32(maxBytesSendable),
+				sent: time.Now(),
+				retransmitted: false,
+			}
+			retransQueue := entry.normalSocket.retransQueue
+			retransQueue.mu.Lock()
+
+			// RFC 6298:
+			//    (5.1) Every time a packet containing data is sent (including a
+			//          retransmission), if the timer is not running, start it running
+			//          so that it will expire after RTO seconds (for the current value
+			//          of RTO).
+			if len(retransQueue.array) == 0 {
+				retransQueue.timer = entry.startRtoTimer()
+			}
+			
+			retransQueue.array = append(retransQueue.array, segmentRetransEntry)
+			retransQueue.mu.Unlock()
+
             conn.sendBuf.mu.Lock()
 			/* update NXT and seqNum */
             sendBuf.nxt += maxBytesSendable

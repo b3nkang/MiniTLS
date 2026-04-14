@@ -44,6 +44,7 @@ import (
 	utils "ip-isabelle-and-ben/pkg/protocol"
 	"net/netip"
 	"strings"
+	"time"
 
 	ipv4header "github.com/brown-csci1680/iptcp-headers"
 	"github.com/google/netstack/tcpip/header"
@@ -251,6 +252,13 @@ RCV.NXT =< SEG.SEQ+SEG.LEN-1 < RCV.NXT+RCV.WND
 */
 func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload []byte) error {
 	fmt.Println("Packet being handled by receiver in handlePayload")
+
+	// flag is flipped to get recvr to drop all packets for the purpose of testing retransmissions
+	if entry.dropForRetrans {
+		fmt.Println("[TCP - handlePayload] flag dropForRetrans = true, DROPPING SEGMENT")
+		return nil
+	}
+
 	// prior logic already handles empty payloads, assume len(payload) > 0
 	recvBuf := entry.normalSocket.recvBuf
 
@@ -368,11 +376,11 @@ func (entry *SocketTableEntry) sendPureAck(otherSideSeq uint32) error {
 }
 
 /* creates tcp header and calls send method to send segment to receiving end of conn */
-func (entry *SocketTableEntry) sendSegment(segment []byte) error {
+func (entry *SocketTableEntry) sendSegment(segment []byte, seqNum uint32) error {
 	tcpHdr := &header.TCPFields{
 		SrcPort:       entry.localPort,
 		DstPort:       entry.destPort,
-		SeqNum:        entry.seqNum,
+		SeqNum:        seqNum,
 		AckNum:        entry.normalSocket.recvBuf.nxt,
 		DataOffset:    20,
 		Flags:         header.TCPFlagAck, /* data should be type ACK */
@@ -422,8 +430,8 @@ window
 // 		currently, this consists of:
 //			- sendBuf.otherSideWindow, tracking of the other side's available window size
 // 			- sendBuf.una, we may want to use an enqueue-inflight-data structure for retrans but for now it is needed (TODO: revisit)
-func (entry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
-	sendBuf := entry.normalSocket.sendBuf
+func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
+	sendBuf := socketEntry.normalSocket.sendBuf
 	sendBuf.mu.Lock()
 	defer sendBuf.mu.Unlock()
 
@@ -436,6 +444,60 @@ func (entry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 		sendBuf.una = seg.AckNum /* move UNA up */
 		/* adjust internals of circular buffer to reflect num bytes Acked */
 		sendBuf.cBuf.AdvanceBase(ackedBytes)
+
+		// --------------- retransmission queue updates ------------------
+		//	RFC 6298 (5):
+		//    An implementation MUST manage the retransmission timer(s) in such a
+		//    way that a segment is never retransmitted too early, i.e., less than
+		//    one RTO after the previous transmission of that segment.
+
+		//    The following is the RECOMMENDED algorithm for managing the
+		//    retransmission timer:
+
+		//    (5.1) Every time a packet containing data is sent (including a
+		//          retransmission), if the timer is not running, start it running
+		//          so that it will expire after RTO seconds (for the current value
+		//          of RTO).
+
+		//    (5.2) When all outstanding data has been acknowledged, turn off the
+		//          retransmission timer.
+
+		//    (5.3) When an ACK is received that acknowledges new data, restart the
+		//          retransmission timer so that it will expire after RTO seconds
+		//          (for the current value of RTO).
+
+		retransQueue := socketEntry.normalSocket.retransQueue
+		retransQueue.mu.Lock()
+
+		// stop the timer since we just got something ack'd
+		retransQueue.timer.Stop()
+
+		var ackedEntry *RetransmissionEntry
+		// update queue head: pop from head repeatedly until we get the segement we just ack'd popped
+		for len(retransQueue.array) > 0 && retransQueue.array[0].seqNum + retransQueue.array[0].len <= seg.AckNum {
+			ackedEntry = retransQueue.array[0] // we need entry's .sent time field to calculate RTT
+			// the ack is still ahead of the head of the queue, keep popping
+			retransQueue.array = retransQueue.array[1:]
+		}
+
+		// update RTO
+		if ackedEntry != nil && !ackedEntry.retransmitted { // if duplicate ack, ackedEntry will be null, and if retrans we don't want to update (Karn's)
+			fmt.Println("[TCP - handlePureAck] RTO: updating RTO given new recvd ack")
+			err := retransQueue.updateRto(ackedEntry.getRtt())
+			if err != nil {
+				fmt.Println("[TCP - handlePureAck] error: update RTO failed")
+			}
+		}
+
+		// 5.2: if the queue is now empty, we stop and do nothing (we previously stopped it earlier in this function)
+		// 5.3: if queue still has data in flight (entries), then restart the timer
+		if len(retransQueue.array) > 0 {
+			fmt.Println("[TCP - handlePureAck] 5.3 RTO: still data in flight, restarting timer")
+			socketEntry.startRtoTimer()
+		}
+
+		retransQueue.mu.Unlock()
+
 		/* tell sendBuf that there is space */	
 		select {
 		case sendBuf.spaceAvailable <- struct{}{}:
@@ -446,6 +508,7 @@ func (entry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 		fmt.Println("[TCP - handlePureAck] TODO, condition seg.AckNum > sendBuf.nxt, no fix implemented yet")
 		return nil
 	} else if seg.AckNum <= sendBuf.una { // RFC: If the ACK is a duplicate (SEG.ACK =< SND.UNA), it can be ignored.
+		// we also don't need to update retransQueue since the out-of-order segment will have sliced this segment off already
 		return nil
 	} else {
 		fmt.Println("[TCP - handlePureAck] condition should not have been hit")
@@ -521,10 +584,33 @@ func (entry *SocketTableEntry) sendLoop() {
 			segmentData := sendBuf.cBuf.SliceFrom(sendBuf.nxt, uint32(maxBytesSendable))
 			conn.sendBuf.mu.Unlock()
 
-			if entry.sendSegment(segmentData) != nil {
+			if entry.sendSegment(segmentData, entry.seqNum) != nil {
 				fmt.Println("[TCP - Send Loop] Error sending segment")
 				break
 			}
+
+			// add to retransmission queue
+			segmentRetransEntry := &RetransmissionEntry{
+				seqNum: entry.seqNum,
+				len: uint32(maxBytesSendable),
+				sent: time.Now(),
+				retransmitted: false,
+			}
+			retransQueue := entry.normalSocket.retransQueue
+			retransQueue.mu.Lock()
+
+			// RFC 6298:
+			//    (5.1) Every time a packet containing data is sent (including a
+			//          retransmission), if the timer is not running, start it running
+			//          so that it will expire after RTO seconds (for the current value
+			//          of RTO).
+			if len(retransQueue.array) == 0 {
+				fmt.Println("[TCP - sendloop] RTO: timer was stopped/set to 0; restarting")
+				retransQueue.timer = entry.startRtoTimer()
+			}
+			
+			retransQueue.array = append(retransQueue.array, segmentRetransEntry)
+			retransQueue.mu.Unlock()
 
             conn.sendBuf.mu.Lock()
 			/* update NXT and seqNum */
@@ -548,9 +634,72 @@ func (recvBuf *RecvBuf) getAvailableWindow() uint16 {
 	return uint16(MAX_WIN_SIZE - recvBuf.cBuf.currSize)
 }
 
+// highest-level RTO countdown function. calls retransmitSegment if timer expires
+func (entry *SocketTableEntry) startRtoTimer() *time.Timer {
+	// TODO: double check if mutex lock is necessary here. i believe not since this should only be called where mtx is locked
+	return time.AfterFunc(entry.normalSocket.retransQueue.rto, func(){entry.retransmitSegment()})
+}
 
+// retransmit the segment. called by timer.afterFunc to start the countdown on RTO
+func (entry *SocketTableEntry) retransmitSegment() error {
+	retransQueue := entry.normalSocket.retransQueue
+	retransQueue.mu.Lock()
+	defer retransQueue.mu.Unlock()
 
+	// When RTO timer expires Retransmit earliest unACK’d segment
+	segmentToResend := retransQueue.array[0]
 
+	// update to true per RFC 6298 sec 3 (on Karns) to avoid updating RTO on ack of this segment
+	segmentToResend.retransmitted = true
+
+	// actually send
+	cBuf := entry.normalSocket.sendBuf.cBuf
+	sliceToSend := cBuf.SliceFrom(segmentToResend.seqNum,segmentToResend.len)
+	fmt.Printf("[TCP - retransmitSegment] re-transmitting head of RQ, contents: [ %s ]\n",string(sliceToSend))
+	err := entry.sendSegment(sliceToSend, segmentToResend.seqNum)
+	if err != nil {
+		fmt.Println("[TCP - RetransmitSegment] Error sending segment")
+		return errors.New("[TCP - RetransmitSegment] bad nested entry.sendSegment call")
+	}
+
+	// update RTO
+	rto := entry.normalSocket.retransQueue.rto 
+	entry.normalSocket.retransQueue.rto = min(rto * 2, RTO_MAX) //  RFC 6298 (5.5):
+																// 		The host MUST set RTO <- RTO * 2 ("back off the timer").  The
+																//  	maximum value discussed in (2.5) above may be used to provide
+																//  	an upper bound to this doubling operation.
+
+	// start the timer again, recursive call
+	retransQueue.timer = entry.startRtoTimer()
+	//	TODO: pretty sure this is expected behavior for it to spin forever waiting for an ack for a retransmission at RTO_MAX in worst case
+	return nil
+}
+
+func (retransEntry *RetransmissionEntry) getRtt() time.Duration {
+	return time.Since(retransEntry.sent)
+}
+
+// TODO: double check there is no issue with the consts all being in milliseconds
+// slides formula: SRTT = (⍺ * SRTTLast) + (1 - ⍺)* RTTMeasured
+func (retransQueue *RetransmissionQueue) computeNewSrtt(rtt time.Duration) time.Duration {
+	if retransQueue.srtt == 0 {
+        retransQueue.srtt = rtt
+    } else {
+        retransQueue.srtt = time.Duration(RTO_ALPHA*float64(retransQueue.srtt) + (1-RTO_ALPHA)*float64(rtt))
+    }
+	return retransQueue.srtt
+}
+
+// TODO: double check there is no issue with the consts all being in milliseconds
+// slides formula: RTO = max(RTOMin, min(β * SRTT, RTOMax))
+func (retransQueue *RetransmissionQueue) updateRto(rtt time.Duration) error {
+	srtt := retransQueue.computeNewSrtt(rtt)
+    newRto := time.Duration(RTO_BETA * float64(srtt))
+    retransQueue.rto = max(RTO_MIN, min(newRto, RTO_MAX))
+	return nil
+}
+
+// TODO: delete these functions and the repl command associated
 /* ----------------------PRINTING (NON-CIRCL BUF, OBSOLETE NOW------------------*/
 type BufPointer struct {
 	seq  uint32

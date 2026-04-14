@@ -28,14 +28,14 @@ const (
 // for RTO and SRTT calculations
 // initial values taken from slides
 const (
-	RTO_MIN = 100 		// in milliseconds
-	RTO_MAX = 5000		// in milliseconds
-	RTO_INIT = 1000		// in milliseconds, 
-						// RFC 6298 (2.1): 
-						// 		Until a round-trip time (RTT) measurement has been made for a
-						//		segment sent between the sender and receiver, the sender SHOULD
-						//		set RTO <- 1 second, though the "backing off" on repeated
-						// 		retransmission discussed in (5.5) still applies
+	RTO_MIN = 1 * time.Second		// in milliseconds
+	RTO_MAX = 5 * time.Second		// in milliseconds
+	RTO_INIT = 1 * time.Second		// in milliseconds, 
+									// RFC 6298 (2.1): 
+									// 		Until a round-trip time (RTT) measurement has been made for a
+									//		segment sent between the sender and receiver, the sender SHOULD
+									//		set RTO <- 1 second, though the "backing off" on repeated
+									// 		retransmission discussed in (5.5) still applies
 	RTO_ALPHA = 0.85
 	RTO_BETA = 1.65
 )

@@ -681,7 +681,9 @@ func (retransQueue *RetransmissionQueue) computeNewSrtt(rtt time.Duration) time.
 // TODO: double check there is no issue with the consts all being in milliseconds
 // slides formula: RTO = max(RTOMin, min(β * SRTT, RTOMax))
 func (retransQueue *RetransmissionQueue) updateRto(rtt time.Duration) error {
-	retransQueue.rto = time.Duration(max(RTO_MIN, min(RTO_BETA*float64(retransQueue.computeNewSrtt(rtt)),RTO_MAX)))
+	srtt := retransQueue.computeNewSrtt(rtt)
+    newRto := time.Duration(RTO_BETA * float64(srtt))
+    retransQueue.rto = max(RTO_MIN, min(newRto, RTO_MAX))
 	return nil
 }
 

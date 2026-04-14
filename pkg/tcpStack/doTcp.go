@@ -376,11 +376,11 @@ func (entry *SocketTableEntry) sendPureAck(otherSideSeq uint32) error {
 }
 
 /* creates tcp header and calls send method to send segment to receiving end of conn */
-func (entry *SocketTableEntry) sendSegment(segment []byte) error {
+func (entry *SocketTableEntry) sendSegment(segment []byte, seqNum uint32) error {
 	tcpHdr := &header.TCPFields{
 		SrcPort:       entry.localPort,
 		DstPort:       entry.destPort,
-		SeqNum:        entry.seqNum,
+		SeqNum:        seqNum,
 		AckNum:        entry.normalSocket.recvBuf.nxt,
 		DataOffset:    20,
 		Flags:         header.TCPFlagAck, /* data should be type ACK */
@@ -584,7 +584,7 @@ func (entry *SocketTableEntry) sendLoop() {
 			segmentData := sendBuf.cBuf.SliceFrom(sendBuf.nxt, uint32(maxBytesSendable))
 			conn.sendBuf.mu.Unlock()
 
-			if entry.sendSegment(segmentData) != nil {
+			if entry.sendSegment(segmentData, entry.seqNum) != nil {
 				fmt.Println("[TCP - Send Loop] Error sending segment")
 				break
 			}
@@ -656,7 +656,7 @@ func (entry *SocketTableEntry) retransmitSegment() error {
 	cBuf := entry.normalSocket.sendBuf.cBuf
 	sliceToSend := cBuf.SliceFrom(segmentToResend.seqNum,segmentToResend.len)
 	fmt.Printf("[TCP - retransmitSegment] re-transmitting head of RQ, contents: [ %s ]\n",string(sliceToSend))
-	err := entry.sendSegment(sliceToSend)
+	err := entry.sendSegment(sliceToSend, segmentToResend.seqNum)
 	if err != nil {
 		fmt.Println("[TCP - RetransmitSegment] Error sending segment")
 		return errors.New("[TCP - RetransmitSegment] bad nested entry.sendSegment call")

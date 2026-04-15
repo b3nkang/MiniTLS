@@ -2,36 +2,16 @@ package tcpstack
 
 /*
 
-Recent changes:
-
-4. Receiving ---------------------------------------------------------------------------------------> done. did a decent amount of testing, decently confident
-    - I think Acks are being sent but not sure if they're correct--verify that ---------------------> they are now and should be correct
-        - write method to handle ack and then do the things below ----------------------------------> done
-    - passing information from ACK to sending thread -----------------------------------------------> done
-        - sending thread needs to know window size and keep track of data IN FLIGHT and
-            compare those numbers before sending new data ------------------------------------------> done
-        - we aren't doing this at all yet
-5. Circular buffer ---------------------------------------------------------------------------------> it is implemented with light testing indicating it's working.
-    - Make a circular buffer struct that has methods for indexing, etc and add to send & recv buf     more testing is needed however. you can test edge cases by
-                                                                                                      changing MAX_WIN_SIZE in types.go from 65k to like 15
-
-NEXT STEPS/TODO:s:
-    - check that the circleBuf slop is looking ok -- seems fine?
-        - I did get to a point where I ran into a ZWP crash, so ZWP likely needs to be implemented to make progress on this -- next milestone
-        - My wireshark must be broken bc I can't see any packets, so the testing was all through prints so impl could be a bit sus,
-          so if you can do this I would recommend checking there --done, looks good
-    - handle early arrivals. i don't actually think this should be too bad at all, min heap plus an extra check in HandlePayload()
-    - much further down the line but from here I think it's beginning sf and rf repl commands?
 
 NOTES:
-- per RFC: default MSS is 536 (max segment size) // TODO: i'm not enforcing this yet, should we? -ben
-	- NO--doesn't have to be 536, but does have to adhere to this:
-	As in the IP assignment, never send packets greater than the MTU.
-	For our link layer, the maximum MTU is 1400 bytes:
-	any TCP segments you send must be no larger than the MTU–therefore,
-	the maximum TCP payload size is: 1400 bytes - (size of IP header) - (size of TCP header)
+	MSS is 1360 i think? maybe we should verify this...Verified: we can set MSS to whatever we want!
 
-	This means  MSS is 1360 i think? maybe we should verify this...Verified: we can set MSS to whatever we want!
+TODO: TIMEOUT CONNECTION AFTER X RETRANSMISSIONS (rfc MUST-20): Can just pick a maximum number of retransmissions, abort if this threshold is exceeded.  
+Value does not need to be associated with a specific time interval (though you may want to set a minimum time interval, eg. 5s, before the connection aborts)
+
+TODO: RFC MUST-66: Receiving an RST MUST always immediately terminate the connection.  Can always ignore URG flag.
+
+TODO: read through socket API description in handout and make sure we're returning errors properly
 
 // TODO: small, refactor tcpHeader = SEGheader or something to make things much less confusing
 // TODO: low prio/long term, look into if seqNum field is even necessary in table entry. may not be
@@ -56,8 +36,6 @@ not sure if we need the IP header here but will leave for now
 func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 	table := tcp.socketTable
 
-	fmt.Println("[TCP] HandleTCP called, parsing and validating TCP message")
-
 	/* 1. parse TCP header and extract message body */
 	tcpHdr, tcpPayload, err := utils.ParseAndValidateTCP(hdr, payload) // TODO: re-add tcpData when we need. Its "_" right now because no use, so to turn off compiler warning
 	if err != nil {
@@ -80,18 +58,13 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 	case LISTEN:
 		/* we matched the listen socket--so we should be getting an initial SYN */
 		/* should pass in IP Source as OUR DEST and IP Dest as OUR SOURCE since this is FROM REMOTE */
-		fmt.Println("[TCP] Packet sent to listen socket--starting 3-way handshake")
 		tcp.handleSyn(socketEntry.listenSocket, tcpHdr, hdr.Dst, hdr.Src)
 		return
 	case SYN_RECEIVED:
-		fmt.Println("[TCP] handler received packet in state SYN-RECEIVED -> handling ACK")
 		tcp.handleAckHandshake(socketEntry, tcpHdr)
 	case SYN_SENT:
-		fmt.Println("[TCP] handler received packet in state SYN-SENT -> handling SYN-ACK")
 		tcp.handleSynAck(socketEntry, tcpHdr)
 	case ESTABLISHED:
-		fmt.Println("[TCP] handler received packet in state ESTABLISHED -> handling flags and/or payload")
-
 		switch {
 		/* FIN specified */
 		case tcpHdr.Flags & header.TCPFlagFin != 0:
@@ -103,7 +76,7 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 			return
 		/* data ACK */
 		case tcpHdr.Flags & header.TCPFlagAck != 0 && len(tcpPayload) == 0:
-			fmt.Println("[TCP - HandleTCP] recvd pureAck, handling")
+			fmt.Printf("[TCP - HandleTCP] received ACK for seg: %d\n", tcpHdr.AckNum)
 			socketEntry.handlePureAck(tcpHdr)
 			return
 		/* invalid/empty packet */
@@ -189,8 +162,6 @@ func (tcp *TCPStack) sendTCP(sendReq *SendRequest) {
 
 	/* call SendIP */
 	tcp.ipStack.SendIP(destIP, ipPacketPayload, 6)
-	fmt.Printf("[TCP] SendTCP sent message from SRC: %s to DST: %s\n", srcIP.String(), destIP.String())
-
 	/* TODO: return bytes written/sent? */
 }
 
@@ -251,12 +222,13 @@ RCV.NXT =< SEG.SEQ+SEG.LEN-1 < RCV.NXT+RCV.WND
 
 */
 func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload []byte) error {
-	fmt.Println("Packet being handled by receiver in handlePayload")
-
 	// flag is flipped to get recvr to drop all packets for the purpose of testing retransmissions
 	if entry.dropForRetrans {
-		fmt.Println("[TCP - handlePayload] flag dropForRetrans = true, DROPPING SEGMENT")
-		return nil
+		/* for testing: only drop packet 50% of the time */
+		if time.Now().UnixNano()%2 == 0 {
+			fmt.Printf("[TCP - handlePayload] flag dropForRetrans + coin flip = true, DROPPING SEGMENT %d\n", tcpHeader.SeqNum)
+			return nil
+		}
 	}
 
 	// prior logic already handles empty payloads, assume len(payload) > 0
@@ -321,8 +293,12 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 			- sender will send another segment of that size and then ZWP will start so we're good */
 		space := int(recvBuf.cBuf.FreeSpace())
 		if len(min.data) > space {
+			fmt.Print("Got to case where first segment in early arrivals is longer than receive buf available space. Space in buf: %d, Size of segment: %d\n",
+						space, len(min.data))					
 			break
 		}
+
+		fmt.Printf("Popping early arrival from queue: %s\n", min.data)
 
 		/* actually take out minimum segment and write to recv buffer */
 		segment := recvBuf.earlyArrivals.PopMin()
@@ -331,7 +307,7 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 	}
 
 	/* ------ print receive buffer for debugging ----- */
-	fmt.Printf("state: base=%d nxt=%d lbr=%d currSize=%d payLen=%d\n", recvBuf.cBuf.baseSeq, recvBuf.nxt, recvBuf.lbr, recvBuf.cBuf.currSize, payLen)
+	// fmt.Printf("state: base=%d nxt=%d lbr=%d currSize=%d payLen=%d\n", recvBuf.cBuf.baseSeq, recvBuf.nxt, recvBuf.lbr, recvBuf.cBuf.currSize, payLen)
 	fmt.Printf("copied bytes: %q\n", recvBuf.cBuf.SliceFrom(tcpHeader.SeqNum, payLen))
 	if recvBuf.cBuf.currSize > 0 {
 		fmt.Printf("entire readable region: %q\n",recvBuf.cBuf.SliceFrom(recvBuf.lbr+1, recvBuf.cBuf.currSize))
@@ -439,7 +415,7 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 
 	// RFC: SND.UNA < SEG.ACK <= SND.NXT -> ACK num of segment is less than or equal to our next Sequence Num (in our send buf)
 	if sendBuf.una < seg.AckNum && seg.AckNum <= sendBuf.nxt {
-		fmt.Println("[TCP - handlePureAck] adjusting UNA to seg.AckNum")
+		// fmt.Println("[TCP - handlePureAck] adjusting UNA to seg.AckNum")
 		ackedBytes := seg.AckNum - sendBuf.una /* num bytes accounted for via this ACK */
 		sendBuf.una = seg.AckNum /* move UNA up */
 		/* adjust internals of circular buffer to reflect num bytes Acked */
@@ -482,7 +458,7 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 
 		// update RTO
 		if ackedEntry != nil && !ackedEntry.retransmitted { // if duplicate ack, ackedEntry will be null, and if retrans we don't want to update (Karn's)
-			fmt.Println("[TCP - handlePureAck] RTO: updating RTO given new recvd ack")
+			fmt.Printf("[TCP - handlePureAck] RTO: updating RTO given new recvd ack for seg %d\n", ackedEntry.seqNum)
 			err := retransQueue.updateRto(ackedEntry.getRtt())
 			if err != nil {
 				fmt.Println("[TCP - handlePureAck] error: update RTO failed")
@@ -645,6 +621,12 @@ func (entry *SocketTableEntry) retransmitSegment() error {
 	retransQueue := entry.normalSocket.retransQueue
 	retransQueue.mu.Lock()
 	defer retransQueue.mu.Unlock()
+
+	/* check for length of queue before doing anything -- cannot retransmit something if queue is empty */
+	if len(retransQueue.array) == 0 {
+		fmt.Println("[Retransmit Segment] -- trying to retransmit but queue is empty. Returning.")
+		return nil
+	}
 
 	// When RTO timer expires Retransmit earliest unACK’d segment
 	segmentToResend := retransQueue.array[0]

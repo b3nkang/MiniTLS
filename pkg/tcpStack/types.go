@@ -21,8 +21,8 @@ const (
 )
 
 const (
-	MAX_WIN_SIZE = 15
-	MAX_SEG_SIZE = 1000  /* 1360 MAX, but we can choose whatever we want */
+	MAX_WIN_SIZE = 65535
+	MAX_SEG_SIZE = 1  /* 1360 MAX, but we can choose whatever we want */
 )
 
 // for RTO and SRTT calculations
@@ -107,6 +107,7 @@ type VTCPConn struct {
 	sendBuf 		*SendBuf
 	recvBuf			*RecvBuf
 	retransQueue	*RetransmissionQueue
+	socketID		int
 }
 
 type SendBuf struct {

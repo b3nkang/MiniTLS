@@ -57,6 +57,7 @@ func (tcp *TCPStack) VListen(port uint16) (*VTCPListener, error) {
 func (listener *VTCPListener) VAccept() (*VTCPConn, error) {
 	listener.acceptingConns = true
 	conn := <-listener.connChan
+	fmt.Printf("New connection => created new socket %d\n", conn.socketID)
 	return conn, nil
 }
 
@@ -96,13 +97,12 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
 	/* make sure we increment table's next port! */
     table.nextID++
     table.socketMap[entry.socketID] = entry
+	conn.socketID = entry.socketID
 	
 	/* set the function to send packets here while we have access to tcp stack -- conn will not when it's trying to send */
 	entry.sendPacketFunc = func(sendReq *SendRequest) {
 		tcp.sendRequests <- sendReq
 	}
-
-	fmt.Println("[TCP] sending SYN from VConnect")
 
 	/* send SYN */
 	entry.sendSyn()
@@ -112,6 +112,7 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
         state := <-entry.establishedChan
         switch state {
 		case ESTABLISHED:
+			fmt.Printf("Created new socket with ID %d\n", conn.socketID)
             return conn, nil
 		/* TODO: actually send this situation if there is an error in the 3-way handshake */
         case ERROR:
@@ -198,6 +199,29 @@ func (conn *VTCPConn) VRead(buf []byte) (int, error) {
         return numBytesRead, nil
     }
 }
+
+/* should be a function on *VTCPListener or *VTCPConn but we can't rlly do that because sendFIN needs 
+	entry and so does removing listen socket from table 
+	should error if listen socket is already closed...but like how would we know that*/
+func (entry *SocketTableEntry) VClose() error {
+	/* check if listen socket: */
+	if entry.normalSocket == nil {
+		listener := entry.listenSocket
+		if !listener.acceptingConns {
+			return errors.New("connection already closed")
+		}
+		listener.acceptingConns = false
+		/* remove from socket table */
+		/* TODO: tell socket table to remove us */
+	}
+
+	/* if normal socket, send FIN, don't block, make sure all subsequent calls to VREAD AND VWRITE are blocked
+	and return an error  */
+
+	return nil
+
+}
+
 
 
 /* verify that random port doesn't conflict with existing connection in table */

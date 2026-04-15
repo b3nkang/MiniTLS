@@ -37,7 +37,6 @@ func (tcp *TCPStack) HandleREPLCommands() {
 			go tcp.aCommand(port) // so REPL dont block
 		case "c":
 			/* connect */
-			fmt.Println("c command recognized in TCP")
 			if len(parts) != 3 {
 				fmt.Println("Usage: c <vip> <port>")
 				continue
@@ -183,23 +182,20 @@ func (tcp *TCPStack) aCommand(port uint16) {
 	}
 
 	for {
-		fmt.Printf("Accepting connections on port %d\n", port)
-		conn, err := listener.VAccept()
+		_, err := listener.VAccept()
 		if err != nil {
 			fmt.Println("Accept error:", err)
 			return
 		}
-		fmt.Println("Accepted connection", conn)
 	}
 }
 
 func (tcp *TCPStack) cCommand(addr netip.Addr, port uint16) {
-    conn, err := tcp.VConnect(addr, port)
+    _, err := tcp.VConnect(addr, port)
     if err != nil {
         fmt.Println("Connect error:", err)
         return
     }
-    fmt.Println("Connected!", conn)
 }
 
 /* call VWrite after finding correct socket entry in table */

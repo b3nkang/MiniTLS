@@ -25,8 +25,8 @@ func main() {
 		fmt.Printf("Error initializing IP Stack: %s\n", err.Error())
 		os.Exit(1)
 	}
-	ipStack.PrintForwardingTable()
-	ipStack.PrintInterfacesForDebugging()
+	// ipStack.PrintForwardingTable()
+	// ipStack.PrintInterfacesForDebugging()
 
 	/* register receive handler for RIP */
 	ipStack.RegisterRecvHandler(200, ipStack.HandleRipMessage)

@@ -10,7 +10,6 @@ import (
 
 /* send initial SYN */
 func (entry *SocketTableEntry) sendSyn() error {
-	fmt.Println("[TCP] entering send SYN function")
 	/* make TCP header */
 	tcpHdr := &header.TCPFields{
 		SrcPort:       entry.localPort,
@@ -65,7 +64,6 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 		packetChan: make(chan []byte),
 	}
 
-	fmt.Println("[TCP] normal socket created from listen socket--adding to socket table")
 	/* make socket table entry and add in correct state */
 	entry := &SocketTableEntry{
 		localPort: tcpHeader.DstPort,
@@ -232,11 +230,10 @@ func (tcp *TCPStack) handleAckHandshake(tableEntry *SocketTableEntry, tcpHeader 
 		array: make([]*RetransmissionEntry, 0),
 		rto: RTO_INIT, // refer to types comment
 	}
+	tableEntry.normalSocket.socketID = tableEntry.socketID
 
 	table.mu.Unlock() /* UNLOCK MUTEX BEFORE PASSING SOCKET */
 	tableEntry.listenSocket.connChan <- tableEntry.normalSocket // unblock vconnnect
-
-	fmt.Println("[TCP] Switching state to ESTABLISHED, unblocking Accept.")
 	table.listSockets()
 	fmt.Println(">")
 	return nil

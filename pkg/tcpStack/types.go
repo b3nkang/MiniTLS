@@ -17,6 +17,12 @@ const (
     SYN_SENT
     SYN_RECEIVED
     ESTABLISHED
+	FIN_WAIT_1
+	CLOSE_WAIT
+	LAST_ACK
+	FIN_WAIT_2
+	TIME_WAIT
+
 	ERROR /* just made this for 3-way handshake */
 )
 
@@ -99,6 +105,9 @@ type VTCPListener struct {
 	port 			uint16
 	connChan 		chan *VTCPConn
 	acceptingConns 	bool /* true if Accept() has been called--idk if there's a better way to do this */
+
+	/* pointer to socket table entry for state */
+	socketEntry 	*SocketTableEntry
 }
 
 /* actual "normal socket" object */
@@ -108,6 +117,9 @@ type VTCPConn struct {
 	recvBuf			*RecvBuf
 	retransQueue	*RetransmissionQueue
 	socketID		int
+
+	/* not sure if this is kosher, but we gotta know our state */
+	socketEntry 	*SocketTableEntry
 }
 
 type SendBuf struct {

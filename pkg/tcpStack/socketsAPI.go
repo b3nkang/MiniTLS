@@ -43,6 +43,8 @@ func (tcp *TCPStack) VListen(port uint16) (*VTCPListener, error) {
 		listenSocket: listener,
 	}
 
+	listener.socketEntry = tableEntry
+
 	/* increment next ID for next entry */
 	tcp.socketTable.nextID++
 	/* add this entry to table */
@@ -98,6 +100,8 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
     table.nextID++
     table.socketMap[entry.socketID] = entry
 	conn.socketID = entry.socketID
+
+	conn.socketEntry = entry
 	
 	/* set the function to send packets here while we have access to tcp stack -- conn will not when it's trying to send */
 	entry.sendPacketFunc = func(sendReq *SendRequest) {
@@ -200,26 +204,66 @@ func (conn *VTCPConn) VRead(buf []byte) (int, error) {
     }
 }
 
-/* should be a function on *VTCPListener or *VTCPConn but we can't rlly do that because sendFIN needs 
-	entry and so does removing listen socket from table 
-	should error if listen socket is already closed...but like how would we know that*/
-func (entry *SocketTableEntry) VClose() error {
+func (listener *VTCPListener) VClose() error {
+	entry := listener.socketEntry
 	/* check if listen socket: */
-	if entry.normalSocket == nil {
+	if entry.state == LISTEN {
 		listener := entry.listenSocket
 		if !listener.acceptingConns {
 			return errors.New("connection already closed")
 		}
 		listener.acceptingConns = false
 		/* remove from socket table */
-		/* TODO: tell socket table to remove us */
+		/* TODO: tell socket table to remove us, enter CLOSED state, and return  */
+		entry.state = CLOSED
+	}
+	return nil
+}
+
+/* should be a function on *VTCPListener or *VTCPConn but we can't rlly do that because sendFIN needs 
+	entry and so does removing listen socket from table -> solved by adding socketEntry pointer
+	should error if listen socket is already closed...but like how would we know that*/
+
+/* RFC Specs on Closing:
+
+CLOSED STATE (i.e., TCB does not exist)
+
+If the user does not have access to such a connection, return "error: connection illegal for this process".
+Otherwise, return "error: connection does not exist".
+
+SYN-SENT STATE: Delete the TCB and return "error: closing" responses to any queued SENDs, or RECEIVEs.
+
+SYN-RECEIVED STATE: If no SENDs have been issued and there is no pending data to send, 
+then form a FIN segment and send it, and enter FIN-WAIT-1 state; otherwise, queue for processing 
+after entering ESTABLISHED state.
+*/
+
+func (conn *VTCPConn) VClose() error {
+	entry := conn.socketEntry
+	/* passive closer called close */
+	if entry.state == CLOSE_WAIT {
+		/* TODO: DEAL WITH THIS */
 	}
 
-	/* if normal socket, send FIN, don't block, make sure all subsequent calls to VREAD AND VWRITE are blocked
-	and return an error  */
+	/* already in closing process */
+	if entry.state == FIN_WAIT_1 || entry.state == FIN_WAIT_2 || entry.state == CLOSED || entry.state == LAST_ACK || entry.state == TIME_WAIT {
+		return errors.New("Connection already closing")
+	}
+
+	/* other non-established states (handshake--syn sent, etc), RFC says to do something
+	but in our implementation the handshake blocks so nothing could happen until state is established. 
+	TODO: see if we need to do something special here*/
+	if entry.state != ESTABLISHED {
+		fmt.Println("Strange case ocurred--VClose somehow called during handshake")
+		return errors.New("Attempted closing during handshake")
+	}
+
+	/* this is where we actually send the FIN */
+	if entry.state == ESTABLISHED {
+		entry.sendFin()
+	}
 
 	return nil
-
 }
 
 

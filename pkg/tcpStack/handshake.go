@@ -82,6 +82,8 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 		tcp.sendRequests <- sendReq
 	}
 
+	conn.socketEntry = entry
+
 	table.nextID++ /* need to increment for next connection */
 	table.socketMap[entry.socketID] = entry
 

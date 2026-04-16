@@ -2,6 +2,10 @@ package tcpstack
 
 /*
 
+Had to do something a little gross for closing because VRead and VWrite need to know about state. 
+This should also help us a LOT going forward if it's kosher.
+I added a pointer to socketTableEntry in Conn 
+So now SocketTableENtry stores Conn, but Conn also has a pointer for SocketTableEntry...idk
 
 NOTES:
 	MSS is 1360 i think? maybe we should verify this...Verified: we can set MSS to whatever we want!

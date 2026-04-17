@@ -121,6 +121,17 @@ func (tcp *TCPStack) HandleREPLCommands() {
 				continue
 			}
 			go tcp.sfCommand(parts[1], addr, portInt)
+		case "cl": /* cl <socketID> */
+			if len(parts) != 2 {
+				fmt.Println("Usage: cl <socketID>")
+				continue
+			}
+			sID, err := strconv.Atoi(parts[1])
+			if err != nil {
+				fmt.Println("Socket ID must be an integer")
+				continue
+			}
+			go tcp.clCommand(sID)
 		case "ls":
 			tcp.socketTable.listSockets()
 		case "d":
@@ -145,28 +156,6 @@ func (tcp *TCPStack) HandleREPLCommands() {
 				continue
 			}			
 			tcp.prqCommand(sID)
-		case "ps":
-			if len(parts) != 2 {
-				fmt.Println("Usage: ps <socketID>")
-				continue
-			}
-			sID, err := strconv.Atoi(parts[1])
-			if err != nil {
-				fmt.Println("Socket ID must be an integer")
-				continue
-			}
-			tcp.pSendBuf(sID)
-		case "pr":
-			if len(parts) != 2 {
-				fmt.Println("Usage: pr <socketID>")
-				continue
-			}
-			sID, err := strconv.Atoi(parts[1])
-			if err != nil {
-				fmt.Println("Socket ID must be an integer")
-				continue
-			}
-			tcp.pRecvBuf(sID)
 		default:
 			fmt.Println("Unknown TCP command")
 		}
@@ -212,7 +201,7 @@ func (tcp *TCPStack) sCommand(socketNum int, data []byte) {
 		fmt.Printf("%d bytes written to socket %d\n", bytesWritten, socketNum)
 		return
 	} else {
-		fmt.Printf("Error with VWrite: %s", err)
+		fmt.Printf("VWrite error: %s", err)
 		return
 	}
 }
@@ -340,9 +329,30 @@ func (tcp *TCPStack) sfCommand(srcFile string, addr netip.Addr, portNum int) {
 		}
 	}
 
-	/* TODO: close connection */
-	/* conn.VClose() */
-	return
+	fmt.Println("[SENDFILE] Finishing writing, closing connection ")
+	conn.VClose()
+}
+
+/* close socket with given ID */
+func (tcp *TCPStack) clCommand(socketNum int) {
+	tcp.socketTable.mu.Lock()
+    socket, exists := tcp.socketTable.socketMap[socketNum]
+    tcp.socketTable.mu.Unlock()
+
+	if !exists {
+		fmt.Println("Socket does not exist")
+		return
+	}
+
+	if socket.state == LISTEN {
+		if socket.listenSocket != nil {
+			socket.listenSocket.VClose()		
+		}
+	} else {
+		if socket.normalSocket != nil {
+			socket.normalSocket.VClose()
+		}
+	}
 }
 
 // command for testing retransmissions by configuring the host to drop all packets in handlePayload()
@@ -426,6 +436,18 @@ func stateToString(s int) string {
 		return "SYN-RECVD"
 	case ESTABLISHED:
 		return "ESTABLISHED"
+	case FIN_WAIT_1:
+		return "FIN_WAIT_1"
+	case CLOSE_WAIT:
+		return "CLOSE_WAIT"
+	case LAST_ACK:
+		return "LAST_ACK"
+	case FIN_WAIT_2:
+		return "FIN_WAIT_2"
+	case TIME_WAIT:
+		return "TIME_WAIT"
+	case CLOSED:
+		return "CLOSED"
 	default:
 		return "?"
 	}
@@ -495,46 +517,7 @@ func (tcp *TCPStack) getNormalSocket(socketNum int) (*VTCPConn) {
 		fmt.Println("Socket table does not have TCPConn associated yet")
 		return nil
 	}
-	/* check that conn is established */
-	if socket.state != ESTABLISHED {
-		fmt.Printf("Connection with %d not ESTABLISHED\n", socketNum)
-		return nil
-	}
 
 	return socket.normalSocket
 }
 
-// NOTE: these no longer work, was for testing with simple arrays
-
-func (tcp *TCPStack) pSendBuf(socketNum int) {
-	socket := tcp.getNormalSocket(socketNum)
-	if socket == nil {
-		return
-	}
-
-	sendBuf := socket.sendBuf
-	sendBuf.mu.Lock()
-	defer sendBuf.mu.Unlock()
-
-	printBufferWithPointers(sendBuf.cBuf.buf, sendBuf.base, 10, []BufPointer{
-		{seq: sendBuf.una, mark: "U"},
-		{seq: sendBuf.nxt, mark: "N"},
-		{seq: sendBuf.lbw, mark: "L"},
-	})
-}
-
-func (tcp *TCPStack) pRecvBuf(socketNum int) {
-	socket := tcp.getNormalSocket(socketNum)
-	if socket == nil {
-		return
-	}
-
-	recvBuf := socket.recvBuf
-	recvBuf.mu.Lock()
-	defer recvBuf.mu.Unlock()
-
-	printBufferWithPointers(recvBuf.cBuf.buf, recvBuf.cBuf.baseSeq, 10, []BufPointer{
-		{seq: recvBuf.lbr, mark: "R"},
-		{seq: recvBuf.nxt, mark: "N"},
-	})
-}

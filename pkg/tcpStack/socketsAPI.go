@@ -3,9 +3,11 @@ package tcpstack
 import (
 	"errors"
 	"fmt"
+	"io"
 	"ip-isabelle-and-ben/pkg/ipStack"
 	utils "ip-isabelle-and-ben/pkg/protocol"
 	"net/netip"
+	"time"
 )
 
 /* init socket table and TCP stack */
@@ -63,7 +65,8 @@ func (listener *VTCPListener) VAccept() (*VTCPConn, error) {
 	return conn, nil
 }
 
-/* create a new conn and perform handshake. block until connection established */
+/* create a new conn and perform handshake. block until connection established
+TODO: if we put in the right IP address but wrong port, we segfault */
 func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
 	table := tcp.socketTable
 
@@ -102,6 +105,9 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
 	conn.socketID = entry.socketID
 
 	conn.socketEntry = entry
+
+	/* set set-removal function */
+	entry.removeSelf = tcp.socketTable.Remove
 	
 	/* set the function to send packets here while we have access to tcp stack -- conn will not when it's trying to send */
 	entry.sendPacketFunc = func(sendReq *SendRequest) {
@@ -127,6 +133,12 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
 
 /* returns bytes written (or error) -- block until all bytes written */
 func (conn *VTCPConn) VWrite(data []byte) (int, error) {
+	/* check that we are in a state that can write */
+	state := conn.socketEntry.state
+	if state == FIN_WAIT_1 ||  state == FIN_WAIT_2 || state == TIME_WAIT || state == LAST_ACK || state == CLOSED {
+		return 0, errors.New("Connection closing")
+	}
+
 	/* give the data to the conn's sendbuf data channel */
 	sendBuf := conn.sendBuf
 	totalBytesWritten := 0
@@ -169,7 +181,6 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 		}
 	}
 
-
 	return totalBytesWritten, nil
 }
 
@@ -179,12 +190,23 @@ The returned error is nil on success, io.EOF if other side of
 connection has finished, or another error describing other failure cases.
 */
 func (conn *VTCPConn) VRead(buf []byte) (int, error) {
+	state := conn.socketEntry.state
+	/* check that we are in ESTABLISHED state */
+	if state == FIN_WAIT_1 ||  state == FIN_WAIT_2 || state == TIME_WAIT || state == LAST_ACK || state == CLOSED {
+		return 0, errors.New("Connection closing")
+	}
+
 	/* loop so that we block until data is ready */
     for {
 		/* lock mutex before accessing fields */
         conn.recvBuf.mu.Lock()
 		/* if current size == 0, no new data in buffer, need to wait for signal to read */
         if conn.recvBuf.cBuf.currSize == 0 {
+			/* if state is CLOSE_WAIT -> other side is done sending, so we can send EOF */
+			if conn.socketEntry.state == CLOSE_WAIT {
+				conn.recvBuf.mu.Unlock()
+				return 0, io.EOF
+			}
             conn.recvBuf.mu.Unlock()
             <-conn.recvBuf.dataToRead  /* wait for signal that new data exists */
             continue
@@ -206,6 +228,9 @@ func (conn *VTCPConn) VRead(buf []byte) (int, error) {
 
 func (listener *VTCPListener) VClose() error {
 	entry := listener.socketEntry
+	if entry.state != LISTEN {
+		return errors.New("connection closing")
+	}
 	/* check if listen socket: */
 	if entry.state == LISTEN {
 		listener := entry.listenSocket
@@ -213,9 +238,9 @@ func (listener *VTCPListener) VClose() error {
 			return errors.New("connection already closed")
 		}
 		listener.acceptingConns = false
-		/* remove from socket table */
-		/* TODO: tell socket table to remove us, enter CLOSED state, and return  */
 		entry.state = CLOSED
+		/* tell socket table to remove us, enter CLOSED state, and return  */
+		entry.listenerTeardown()
 	}
 	return nil
 }
@@ -240,27 +265,31 @@ after entering ESTABLISHED state.
 
 func (conn *VTCPConn) VClose() error {
 	entry := conn.socketEntry
-	/* passive closer called close */
-	if entry.state == CLOSE_WAIT {
-		/* TODO: DEAL WITH THIS */
-	}
 
 	/* already in closing process */
 	if entry.state == FIN_WAIT_1 || entry.state == FIN_WAIT_2 || entry.state == CLOSED || entry.state == LAST_ACK || entry.state == TIME_WAIT {
 		return errors.New("Connection already closing")
 	}
 
-	/* other non-established states (handshake--syn sent, etc), RFC says to do something
-	but in our implementation the handshake blocks so nothing could happen until state is established. 
-	TODO: see if we need to do something special here*/
-	if entry.state != ESTABLISHED {
+	/* this is where we actually send the FIN */
+	if entry.state == ESTABLISHED || entry.state == CLOSE_WAIT {
+		/* wait until send buf is empty before sending FIN */
+		fmt.Println("[VCLOSE] waiting for sendbuf to empty before sending FIN")
+		for {
+			conn.sendBuf.mu.Lock()
+			empty := conn.sendBuf.nxt <= conn.sendBuf.una
+			conn.sendBuf.mu.Unlock()
+			
+			if empty {
+				break
+			}
+			/* wait a tiny bit before checking again */
+			time.Sleep(10 * time.Millisecond)
+		}
+		entry.sendFin()
+	} else {
 		fmt.Println("Strange case ocurred--VClose somehow called during handshake")
 		return errors.New("Attempted closing during handshake")
-	}
-
-	/* this is where we actually send the FIN */
-	if entry.state == ESTABLISHED {
-		entry.sendFin()
 	}
 
 	return nil

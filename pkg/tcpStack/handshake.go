@@ -82,6 +82,9 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 		tcp.sendRequests <- sendReq
 	}
 
+	/* set function for self-removal from table */
+	entry.removeSelf = tcp.socketTable.Remove
+
 	conn.socketEntry = entry
 
 	table.nextID++ /* need to increment for next connection */

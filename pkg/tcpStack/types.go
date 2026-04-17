@@ -22,13 +22,13 @@ const (
 	LAST_ACK
 	FIN_WAIT_2
 	TIME_WAIT
-
 	ERROR /* just made this for 3-way handshake */
 )
 
 const (
 	MAX_WIN_SIZE = 65535
 	MAX_SEG_SIZE = 1  /* 1360 MAX, but we can choose whatever we want */
+	MAX_SEGMENT_LATENCY = 3 /* should be 2 minutes, but reducing for testing */
 )
 
 // for RTO and SRTT calculations
@@ -72,6 +72,9 @@ type SocketTableEntry struct {
 
 	/* for sending packets without exposing whole tcpStack */
 	sendPacketFunc	func(request *SendRequest) /* use to send packets from tcpStack */
+
+	/* removing itself from the scoketTable */
+	removeSelf		func(int)
 }
 
 /* 1 per host: stores all info about open sockets 
@@ -160,6 +163,8 @@ type RecvBuf struct {
 
 	/* channels */
 	dataToRead chan struct {}
+
+	fin uint32 		/* if FIN has been sent, this will be FIN SEQ, else 0 */
 }
 
 /* circular buffer used in send/recv buf */
@@ -187,6 +192,7 @@ type EarlyArrivals []*EarlyArrival
 type RetransmissionEntry struct {
 	seqNum uint32
 	len uint32				// length of data segment sent (so we know what slice between nxt-una to send)
+	flags uint8				// flags included in segment (assume ACK unless specified)
 	sent time.Time
 	retransmitted bool		// a flag for if the entry has been retransmitted. if so, we don't use to update RTT (Karn's)
 							// RFC 6298: 

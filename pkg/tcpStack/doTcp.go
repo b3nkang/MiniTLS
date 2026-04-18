@@ -528,7 +528,7 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 		// 5.3: if queue still has data in flight (entries), then restart the timer
 		if len(retransQueue.array) > 0 {
 			fmt.Println("[TCP - handlePureAck] 5.3 RTO: still data in flight, restarting timer")
-			socketEntry.startRtoTimer()
+			retransQueue.timer = socketEntry.startRtoTimer()
 		}
 
 		retransQueue.mu.Unlock()
@@ -748,11 +748,12 @@ func (entry *SocketTableEntry) retransmitSegment() error {
 	retransQueue.mu.Lock()
 	defer retransQueue.mu.Unlock()
 
-	/* check for length of queue before doing anything -- cannot retransmit something if queue is empty */
-	if len(retransQueue.array) == 0 {
-		fmt.Println("[Retransmit Segment] -- trying to retransmit but queue is empty. Returning.")
-		return nil
-	}
+	// // Bug is fixed, no longer needed
+	// /* check for length of queue before doing anything -- cannot retransmit something if queue is empty */
+	// if len(retransQueue.array) == 0 {
+	// 	fmt.Println("[Retransmit Segment] -- trying to retransmit but queue is empty. Returning.")
+	// 	return nil
+	// }
 
 	// When RTO timer expires Retransmit earliest unACK’d segment
 	segmentToResend := retransQueue.array[0]

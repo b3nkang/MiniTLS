@@ -292,11 +292,12 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 
 	/* else, must be the segment number we're looking for */
 
-	/* quick space check before writing -- shouldn't be neccesary if sender works right */
+	/* quick space check before writing */
 	space := int(recvBuf.cBuf.FreeSpace())
 	if space == 0 {
-		fmt.Println("[TCP - handlePayload] Space in recv buffer is 0--should not be sending this packet")
+		fmt.Println("[TCP - handlePayload] RECVBUF_SPACE=0, sending back ZWP ack")
 		recvBuf.mu.Unlock()
+		entry.sendPureAck(recvBuf.nxt)
 		return nil
 	}
 	if len(payload) > space {
@@ -457,6 +458,16 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 
 	// ------------------  TODO: test edge cases once circular array is up --------------
 
+	if seg.AckNum > sendBuf.nxt { // RFC: If the ACK acks something not yet sent (SEG.ACK > SND.NXT), then send an ACK, drop the segment, and return
+		// TODO: implement a sendPureAckForSender(). this is a bit of a pain, since sendPureAck() is for the recv side and thus we need a new version
+		fmt.Println("[TCP - handlePureAck] condition seg.AckNum > sendBuf.nxt, no fix implemented yet, dropping")
+		return nil
+	}
+
+	// update immediately for zwp
+	sendBuf.otherSideWindow = seg.WindowSize // update new window size
+	fmt.Printf("[TCP - handlePureAck] sender got new recvr window size: %d\n", sendBuf.otherSideWindow)
+
 	// RFC: SND.UNA < SEG.ACK <= SND.NXT -> ACK num of segment is less than or equal to our next Sequence Num (in our send buf)
 	if sendBuf.una < seg.AckNum && seg.AckNum <= sendBuf.nxt {
 		// fmt.Println("[TCP - handlePureAck] adjusting UNA to seg.AckNum")
@@ -493,6 +504,10 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 		retransQueue.timer.Stop()
 
 		var ackedEntry *RetransmissionEntry
+
+		// NOTE FOR ZWP: 	we DO NOT need to slice off one byte from the head of the RQ when a ZWP byte gets acked because 
+		//					there will NEVER be data in flight when we enter ZWP (recv cannot ack ZWP byte if data in flight)
+		
 		// update queue head: pop from head repeatedly until we get the segement we just ack'd popped
 		for len(retransQueue.array) > 0 && retransQueue.array[0].seqNum + retransQueue.array[0].len <= seg.AckNum {
 			ackedEntry = retransQueue.array[0] // we need entry's .sent time field to calculate RTT
@@ -541,10 +556,6 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 		case sendBuf.spaceAvailable <- struct{}{}:
 		default:
 		}
-	} else if seg.AckNum > sendBuf.nxt { // RFC: If the ACK acks something not yet sent (SEG.ACK > SND.NXT), then send an ACK, drop the segment, and return
-		// TODO: implement a sendPureAckForSender(). this is a bit of a pain, since sendPureAck() is for the recv side and thus we need a new version
-		fmt.Println("[TCP - handlePureAck] TODO, condition seg.AckNum > sendBuf.nxt, no fix implemented yet")
-		return nil
 	} else if seg.AckNum <= sendBuf.una { // RFC: If the ACK is a duplicate (SEG.ACK =< SND.UNA), it can be ignored.
 		// we also don't need to update retransQueue since the out-of-order segment will have sliced this segment off already
 		return nil
@@ -552,8 +563,10 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 		fmt.Println("[TCP - handlePureAck] condition should not have been hit")
 		return nil
 	}
-	sendBuf.otherSideWindow = seg.WindowSize // update new window size
-	fmt.Printf("[TCP - handlePureAck] sender got new recvr window size: %d\n", sendBuf.otherSideWindow)
+	select {
+	case sendBuf.otherSideWindowUpdated <- struct{}{}:
+	default:
+	}	
 	return nil
 }
 
@@ -563,6 +576,10 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
    know other side's window size and update it with Acks */
 func (entry *SocketTableEntry) sendLoop() {
 	conn := entry.normalSocket
+
+	var probeTimer *time.Timer
+	probing := false
+
 	for {
 		/* return if state is closed */
 		if entry.state == CLOSED {
@@ -606,11 +623,53 @@ func (entry *SocketTableEntry) sendLoop() {
 			fmt.Printf("[TCP - sendloop] Other side window: %d, Bytes in flight: %d, Window Remaining (OSW - BIF) = %d\n", 
 						sendBuf.otherSideWindow, sendBuf.getBytesInFlight(), windowRemaining)
 
+			// if no windowRemaining, we will always continue and restart the inner for loop
 			if windowRemaining <= 0 {
-				fmt.Println("[TCP - sendloop] no window left") // update: couple hours later, ran into ZWP issue here. TODO:!
-				/* TODO: start zero-window-probing here! */
-				conn.sendBuf.mu.Unlock()
-				break
+				fmt.Println("[TCP - sendloop] no window left")
+				/* start zero-window-probing here! */
+				// 		if lbw < nxt there is no data to send
+				//		bytesInFlight must be 0
+				if int(sendBuf.otherSideWindow) == 0 && sendBuf.lbw >= sendBuf.nxt && sendBuf.getBytesInFlight() == 0 {
+					fmt.Println("[TCP - sendloop] starting ZWP")
+
+					// only send a probe when: first entering ZWP, or after timer retriggers
+					if !probing {
+						probeSeq := sendBuf.una // una and nxt should be the same (no data in flight)
+						probeByte := sendBuf.cBuf.SliceFrom(probeSeq, 1)
+						sendBuf.mu.Unlock()
+
+						// send probe
+						entry.sendSegment(probeByte, probeSeq, header.TCPFlagAck)
+
+						// start timer for next ZWP
+						// small TODO: add exponential backoff (not strictly required in spec)
+						if probeTimer == nil {
+							probeTimer = time.NewTimer(PROBE_ITV)
+						} else {
+							probeTimer.Reset(PROBE_ITV)
+						}
+						probing = true
+					} else {
+						sendBuf.mu.Unlock()
+					}
+
+					select {
+					case <-sendBuf.otherSideWindowUpdated:
+						// a new ack has arrived with a new window size
+						continue
+					case <-probeTimer.C:
+						// time to probe again
+						probing = false // this will cause us to probe on next loop
+						continue
+					}
+				} else {
+					// when we start ZWP there should never be bytes in flight, so if there are, wait for retransmissions to clear them first
+					fmt.Println("[TCP - sendloop] conditions not met for ZWP, waiting on retransmission")
+					sendBuf.mu.Unlock()
+					// we don't want to busy wait, so block until we get an update on the window
+					<-sendBuf.otherSideWindowUpdated
+					continue
+				}
 			}
 
 			maxBytesSendable := bytesAvailableInBuf

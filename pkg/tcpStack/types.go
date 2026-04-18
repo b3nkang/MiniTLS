@@ -26,7 +26,7 @@ const (
 )
 
 const (
-	MAX_WIN_SIZE = 65535
+	MAX_WIN_SIZE = 10
 	MAX_SEG_SIZE = 1  /* 1360 MAX, but we can choose whatever we want */
 	MAX_SEGMENT_LATENCY = 3 /* should be 2 minutes, but reducing for testing */
 )
@@ -44,6 +44,7 @@ const (
 									// 		retransmission discussed in (5.5) still applies
 	RTO_ALPHA = 0.85
 	RTO_BETA = 1.65
+	PROBE_ITV = 4 * time.Second
 )
 
 /* info about 1 socket in table */
@@ -144,6 +145,7 @@ type SendBuf struct {
 	/* channels */
 	dataWrittenToBuf chan struct{} 	/* tells thread that VWrite wrote data to buffer, tragically cannot pass straight bytes because VWrite needs to know num bytes written */
 	spaceAvailable chan struct{} 	/* tells VWrite that space has been freed in sendBuf if it's full */
+	otherSideWindowUpdated chan struct{} 	// channel to indicate to sendLoop that  	
 }
 
 type RecvBuf struct {

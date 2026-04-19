@@ -145,7 +145,10 @@ type SendBuf struct {
 	/* channels */
 	dataWrittenToBuf chan struct{} 	/* tells thread that VWrite wrote data to buffer, tragically cannot pass straight bytes because VWrite needs to know num bytes written */
 	spaceAvailable chan struct{} 	/* tells VWrite that space has been freed in sendBuf if it's full */
-	otherSideWindowUpdated chan struct{} 	// channel to indicate to sendLoop that  	
+
+	isProbing bool					// indicates if we are in ZWP
+	otherSideWindowUpdated chan struct{} 	// channel to unblock sendLoop's ZWP condition that the window has been updated since we sent a probe and to try again
+	zwpTrigger chan struct {} 		// channel to trigger ZWP start in handlePureAck. for complicated reasons this must be distinct from otherSideWindowUpdated channel
 }
 
 type RecvBuf struct {

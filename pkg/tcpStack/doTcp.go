@@ -206,7 +206,10 @@ func (entry *SocketTableEntry) initBufs(otherSideSeq uint32) {
 		cBuf: sendCBuf,
 		dataWrittenToBuf: make(chan struct{}, 1),
 		spaceAvailable: make(chan struct{}, 1),
+		otherSideWindowUpdated: make(chan struct{}, 1),
+		zwpTrigger: make(chan struct{}, 1),
 		otherSideWindow: MAX_WIN_SIZE,
+		isProbing: false,
 	}
 	recvCBuf := NewCircleBuf(MAX_WIN_SIZE, otherSideSeq)
 	recvBuf := &RecvBuf{
@@ -459,7 +462,16 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 	// ------------------  TODO: test edge cases once circular array is up --------------
 
 	if seg.AckNum > sendBuf.nxt { // RFC: If the ACK acks something not yet sent (SEG.ACK > SND.NXT), then send an ACK, drop the segment, and return
-		// TODO: implement a sendPureAckForSender(). this is a bit of a pain, since sendPureAck() is for the recv side and thus we need a new version
+		if sendBuf.isProbing && seg.AckNum == sendBuf.nxt+1 {
+			// valid probe ACK - receiver consumed our probe byte
+			// update window but don't advance UNA/NXT or touch retrans queue
+			sendBuf.otherSideWindow = seg.WindowSize
+			select {
+			case sendBuf.otherSideWindowUpdated <- struct{}{}:
+			default:
+			}
+			return nil
+		}
 		fmt.Println("[TCP - handlePureAck] condition seg.AckNum > sendBuf.nxt, no fix implemented yet, dropping")
 		return nil
 	}
@@ -563,6 +575,21 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 		fmt.Println("[TCP - handlePureAck] condition should not have been hit")
 		return nil
 	}
+
+	fmt.Println("ARE WE HERE OR NOT")
+	fmt.Printf("HANDLEACK Tcp sendbuf isProbing: %s\n", sendBuf.isProbing)
+
+	// ZWP: if window now is 0, trigger sendloop to start 
+	//		should only be triggered when we are NOT probing and want to START probing
+	if sendBuf.otherSideWindow == 0 && sendBuf.lbw >= sendBuf.nxt && !sendBuf.isProbing {
+		fmt.Println("[TCP - handlePureAck] sending signal to zwpTrigger channel")
+		sendBuf.isProbing = true
+		select {
+		case sendBuf.zwpTrigger <- struct{}{}:
+		default:
+		}
+	}
+
 	select {
 	case sendBuf.otherSideWindowUpdated <- struct{}{}:
 	default:
@@ -578,15 +605,17 @@ func (entry *SocketTableEntry) sendLoop() {
 	conn := entry.normalSocket
 
 	var probeTimer *time.Timer
-	probing := false
 
 	for {
 		/* return if state is closed */
 		if entry.state == CLOSED {
 			return
 		}
-		/* wait for data to be put in buffer by VWrite */
-		<-conn.sendBuf.dataWrittenToBuf
+		select {
+		case <-conn.sendBuf.dataWrittenToBuf: 			/* wait for data to be put in buffer by VWrite */
+		case <-conn.sendBuf.zwpTrigger:					// or the trigger from handlePureAck reporrting zero window to start ZWP
+		}
+		fmt.Println("SENDLOOP ARE WE HERE OR NOT")
 
 		for { /* added second loop here to deal with MSS (keep sending until all data sent) */
 
@@ -626,40 +655,38 @@ func (entry *SocketTableEntry) sendLoop() {
 			// if no windowRemaining, we will always continue and restart the inner for loop
 			if windowRemaining <= 0 {
 				fmt.Println("[TCP - sendloop] no window left")
-				/* start zero-window-probing here! */
+
+				// -------------------------- ZERO WINDOW PROBING ------------------------------
 				// 		if lbw < nxt there is no data to send
-				//		bytesInFlight must be 0
+				//		bytesInFlight must be 0 (this should always be the case but double checking)
 				if int(sendBuf.otherSideWindow) == 0 && sendBuf.lbw >= sendBuf.nxt && sendBuf.getBytesInFlight() == 0 {
+					sendBuf.isProbing = true
 					fmt.Println("[TCP - sendloop] starting ZWP")
+					fmt.Printf("Tcp sendbuf isProbing: %s\n", sendBuf.isProbing)
 
-					// only send a probe when: first entering ZWP, or after timer retriggers
-					if !probing {
-						probeSeq := sendBuf.una // una and nxt should be the same (no data in flight)
-						probeByte := sendBuf.cBuf.SliceFrom(probeSeq, 1)
-						sendBuf.mu.Unlock()
+					probeSeq := sendBuf.una // una and nxt should be the same (no data in flight). note that entry.seqNum mirrors NXT so that would work too
+					probeByte := sendBuf.cBuf.SliceFrom(probeSeq, 1)
+					sendBuf.mu.Unlock()
 
-						// send probe
-						entry.sendSegment(probeByte, probeSeq, header.TCPFlagAck)
+					// send probe
+					entry.sendSegment(probeByte, probeSeq, header.TCPFlagAck)
 
-						// start timer for next ZWP
-						// small TODO: add exponential backoff (not strictly required in spec)
-						if probeTimer == nil {
-							probeTimer = time.NewTimer(PROBE_ITV)
-						} else {
-							probeTimer.Reset(PROBE_ITV)
-						}
-						probing = true
+					// start timer for next ZWP
+					// small TODO: add exponential backoff (not strictly required in spec)
+					if probeTimer == nil {
+						probeTimer = time.NewTimer(PROBE_ITV)
 					} else {
-						sendBuf.mu.Unlock()
+						probeTimer.Reset(PROBE_ITV)
 					}
 
 					select {
 					case <-sendBuf.otherSideWindowUpdated:
 						// a new ack has arrived with a new window size
+						fmt.Println("[TCP - sendloop] TRIGGER sendBuf.otherSideWindowUpdated")
 						continue
 					case <-probeTimer.C:
 						// time to probe again
-						probing = false // this will cause us to probe on next loop
+						fmt.Println("[TCP - sendloop] TRIGGER probeTimer.C")
 						continue
 					}
 				} else {
@@ -671,6 +698,10 @@ func (entry *SocketTableEntry) sendLoop() {
 					continue
 				}
 			}
+
+			fmt.Println("[TCP - sendloop] cleared the ZWP check")
+			// we have cleared the ZWP check, so turn probing off
+			sendBuf.isProbing = false
 
 			maxBytesSendable := bytesAvailableInBuf
 			if int(maxBytesSendable) > windowRemaining {

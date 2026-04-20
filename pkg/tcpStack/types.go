@@ -44,7 +44,7 @@ const (
 									// 		retransmission discussed in (5.5) still applies
 	RTO_ALPHA = 0.85
 	RTO_BETA = 1.65
-	PROBE_ITV = 4 * time.Second
+	PROBE_ITV = 4 * time.Second		// randomly chosen interval at which to send probes
 )
 
 /* info about 1 socket in table */

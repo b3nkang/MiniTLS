@@ -58,7 +58,7 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 	table := tcp.socketTable
 
 	/* 1. parse TCP header and extract message body */
-	tcpHdr, tcpPayload, err := utils.ParseAndValidateTCP(hdr, payload) // TODO: re-add tcpData when we need. Its "_" right now because no use, so to turn off compiler warning
+	tcpHdr, tcpPayload, err := utils.ParseAndValidateTCP(hdr, payload)
 	if err != nil {
 		/* checksum failed */
 		fmt.Printf("Error: %s\n", err.Error())
@@ -165,14 +165,6 @@ func (table *SocketTable) tableMatch(srcPort uint16, srcIP netip.Addr, destPort 
 
 /* 
 	Calls SendIP where message is the TCP packet
-	takes in TCP Header because otherwise params would be insane
-
-	TODO: probably implement timeouts here for Milestone 1? I think that's in the handout
-		// TODO: reply from ben, i think not per this from handout:
-				For this milestone, you SHOULD NOT attempt to implement retransmissions for dropped 
-				handshake packets. Instead, we recommend leaving this for the final stage, when you’ll 
-				build a generic implementation for retransmissions that works with data packets too.
-
 */
 func (tcp *TCPStack) sendTCP(sendReq *SendRequest) {
 	
@@ -196,7 +188,6 @@ func (tcp *TCPStack) sendTCP(sendReq *SendRequest) {
 
 	/* call SendIP */
 	tcp.ipStack.SendIP(destIP, ipPacketPayload, 6)
-	/* TODO: return bytes written/sent? */
 }
 
 /* initialize send and receive buffers in Conn obj */
@@ -222,7 +213,7 @@ func (entry *SocketTableEntry) initBufs(otherSideSeq uint32) {
 	ourSeqNum := entry.seqNum
 
 	/* send buf --uses OUR (this side's) sequence numbers */
-	sendBuf.una = ourSeqNum // keep for now until end of mstone2. see UNA field in types for reasoning. TODO: verify if needed after mstone2
+	sendBuf.una = ourSeqNum // keep for now until end of mstone2. see UNA field in types for reasoning.
 	sendBuf.nxt = ourSeqNum /* next sequence num to send */
 	sendBuf.lbw = ourSeqNum-1 /* last byte written by app, next write starts at lbw+1 */
 
@@ -292,6 +283,7 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 		fmt.Println("[TCP HANDLE PAYLOAD] Got redundant segment, sending back old ack")
 		recvBuf.mu.Unlock()
 		entry.sendPureAck(ackNum)
+		return nil
 	}
 
 	/* else, must be the segment number we're looking for */
@@ -299,7 +291,7 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 	/* quick space check before writing */
 	space := int(recvBuf.cBuf.FreeSpace())
 	if space == 0 {
-		fmt.Println("[TCP - handlePayload] RECVBUF_SPACE=0, sending back ZWP ack")
+		fmt.Println("[TCP - handlePayload] bufSpace=0, sending ZWP ack")
 		recvBuf.mu.Unlock()
 		entry.sendPureAck(recvBuf.nxt)
 		return nil
@@ -337,7 +329,6 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 			break
 		}
 		/* if not enough space in the recv buffer for full segment, just abandon ship 
-			TODO--verify if that is okay 
 			- this means we will advertise win=X where X < Max Segment Size
 			- sender will send another segment of that size and then ZWP will start so we're good */
 		space := int(recvBuf.cBuf.FreeSpace())
@@ -378,7 +369,7 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 // send "pure" ack, i.e. no payload, passive side sends
 func (entry *SocketTableEntry) sendPureAck(otherSideSeq uint32) error {
 	tcpHdr := &header.TCPFields{
-		SrcPort:       entry.localPort, // TODO: verify
+		SrcPort:       entry.localPort,
 		DstPort:       entry.destPort,
 		SeqNum:        entry.seqNum,
 		AckNum:        otherSideSeq,
@@ -454,13 +445,11 @@ window
 // receive a pure ack and update our side's fields accordingly.
 // 		currently, this consists of:
 //			- sendBuf.otherSideWindow, tracking of the other side's available window size
-// 			- sendBuf.una, we may want to use an enqueue-inflight-data structure for retrans but for now it is needed (TODO: revisit)
+// 			- sendBuf.una
 func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 	sendBuf := socketEntry.normalSocket.sendBuf
 	sendBuf.mu.Lock()
 	defer sendBuf.mu.Unlock()
-
-	// ------------------  TODO: test edge cases once circular array is up --------------
 
 	if seg.AckNum > sendBuf.nxt { // RFC: If the ACK acks something not yet sent (SEG.ACK > SND.NXT), then send an ACK, drop the segment, and return
 		if sendBuf.isProbing && seg.AckNum == sendBuf.nxt+1 {
@@ -590,9 +579,6 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 		return nil
 	}
 
-	fmt.Println("ARE WE HERE OR NOT")
-	fmt.Printf("HANDLEACK Tcp sendbuf isProbing: %s\n", sendBuf.isProbing)
-
 	// ZWP: if window now is 0, trigger sendloop to start 
 	//		should only be triggered when we are NOT probing and want to START probing
 	if sendBuf.otherSideWindow == 0 && sendBuf.lbw >= sendBuf.nxt && !sendBuf.isProbing {
@@ -611,10 +597,7 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 	return nil
 }
 
-/* ONLY FOR SENDING DATA (NO FINS OR ACKS ) thread that waits on data in the buffer and sends said DATA when it's there 
-   TODO: verify there is enough space in the buffer to send. this will rely
-   on some sort of field/data structure that DOES NOT EXIST YET -> need to 
-   know other side's window size and update it with Acks */
+/* ONLY FOR SENDING DATA (NO FINS OR ACKS ) thread that waits on data in the buffer and sends said DATA when it's there */
 func (entry *SocketTableEntry) sendLoop() {
 	conn := entry.normalSocket
 
@@ -629,7 +612,6 @@ func (entry *SocketTableEntry) sendLoop() {
 		case <-conn.sendBuf.dataWrittenToBuf: 			/* wait for data to be put in buffer by VWrite */
 		case <-conn.sendBuf.zwpTrigger:					// or the trigger from handlePureAck reporrting zero window to start ZWP
 		}
-		fmt.Println("SENDLOOP ARE WE HERE OR NOT")
 
 		for { /* added second loop here to deal with MSS (keep sending until all data sent) */
 
@@ -668,15 +650,12 @@ func (entry *SocketTableEntry) sendLoop() {
 
 			// if no windowRemaining, we will always continue and restart the inner for loop
 			if windowRemaining <= 0 {
-				fmt.Println("[TCP - sendloop] no window left")
-
 				// -------------------------- ZERO WINDOW PROBING ------------------------------
 				// 		if lbw < nxt there is no data to send
 				//		bytesInFlight must be 0 (this should always be the case but double checking)
 				if int(sendBuf.otherSideWindow) == 0 && sendBuf.lbw >= sendBuf.nxt && sendBuf.getBytesInFlight() == 0 {
 					sendBuf.isProbing = true
-					fmt.Println("[TCP - sendloop] starting ZWP")
-					fmt.Printf("Tcp sendbuf isProbing: %s\n", sendBuf.isProbing)
+					fmt.Printf("[TCP - sendloop] ZWP, sendbuf isProbing: %s\n", sendBuf.isProbing)
 
 					probeSeq := sendBuf.una // una and nxt should be the same (no data in flight). note that entry.seqNum mirrors NXT so that would work too
 					probeByte := sendBuf.cBuf.SliceFrom(probeSeq, 1)
@@ -713,7 +692,6 @@ func (entry *SocketTableEntry) sendLoop() {
 				}
 			}
 
-			fmt.Println("[TCP - sendloop] cleared the ZWP check")
 			// we have cleared the ZWP check, so turn probing off
 			sendBuf.isProbing = false
 
@@ -826,6 +804,7 @@ func (entry *SocketTableEntry) retransmitSegment() error {
 	// start the timer again, recursive call
 	retransQueue.timer = entry.startRtoTimer()
 	//	TODO: pretty sure this is expected behavior for it to spin forever waiting for an ack for a retransmission at RTO_MAX in worst case
+	// TODO: implement abandon after X retransmissions
 	return nil
 }
 
@@ -833,7 +812,6 @@ func (retransEntry *RetransmissionEntry) getRtt() time.Duration {
 	return time.Since(retransEntry.sent)
 }
 
-// TODO: double check there is no issue with the consts all being in milliseconds
 // slides formula: SRTT = (⍺ * SRTTLast) + (1 - ⍺)* RTTMeasured
 func (retransQueue *RetransmissionQueue) computeNewSrtt(rtt time.Duration) time.Duration {
 	if retransQueue.srtt == 0 {
@@ -844,7 +822,6 @@ func (retransQueue *RetransmissionQueue) computeNewSrtt(rtt time.Duration) time.
 	return retransQueue.srtt
 }
 
-// TODO: double check there is no issue with the consts all being in milliseconds
 // slides formula: RTO = max(RTOMin, min(β * SRTT, RTOMax))
 func (retransQueue *RetransmissionQueue) updateRto(rtt time.Duration) error {
 	srtt := retransQueue.computeNewSrtt(rtt)

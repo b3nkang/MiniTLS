@@ -3,9 +3,11 @@ package tcpstack
 import (
 	"errors"
 	"fmt"
+	"io"
 	"ip-isabelle-and-ben/pkg/ipStack"
 	utils "ip-isabelle-and-ben/pkg/protocol"
 	"net/netip"
+	"time"
 )
 
 /* init socket table and TCP stack */
@@ -41,7 +43,10 @@ func (tcp *TCPStack) VListen(port uint16) (*VTCPListener, error) {
 		state: 	 	LISTEN,
 		socketID:   tcp.socketTable.nextID,
 		listenSocket: listener,
+		removeSelf: tcp.socketTable.Remove,
 	}
+
+	listener.socketEntry = tableEntry
 
 	/* increment next ID for next entry */
 	tcp.socketTable.nextID++
@@ -57,10 +62,12 @@ func (tcp *TCPStack) VListen(port uint16) (*VTCPListener, error) {
 func (listener *VTCPListener) VAccept() (*VTCPConn, error) {
 	listener.acceptingConns = true
 	conn := <-listener.connChan
+	fmt.Printf("New connection => created new socket %d\n", conn.socketID)
 	return conn, nil
 }
 
-/* create a new conn and perform handshake. block until connection established */
+/* create a new conn and perform handshake. block until connection established
+TODO: if we put in the right IP address but wrong port, we segfault */
 func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
 	table := tcp.socketTable
 
@@ -96,13 +103,17 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
 	/* make sure we increment table's next port! */
     table.nextID++
     table.socketMap[entry.socketID] = entry
+	conn.socketID = entry.socketID
+
+	conn.socketEntry = entry
+
+	/* set set-removal function */
+	entry.removeSelf = tcp.socketTable.Remove
 	
 	/* set the function to send packets here while we have access to tcp stack -- conn will not when it's trying to send */
 	entry.sendPacketFunc = func(sendReq *SendRequest) {
 		tcp.sendRequests <- sendReq
 	}
-
-	fmt.Println("[TCP] sending SYN from VConnect")
 
 	/* send SYN */
 	entry.sendSyn()
@@ -112,6 +123,7 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
         state := <-entry.establishedChan
         switch state {
 		case ESTABLISHED:
+			fmt.Printf("Created new socket with ID %d\n", conn.socketID)
             return conn, nil
 		/* TODO: actually send this situation if there is an error in the 3-way handshake */
         case ERROR:
@@ -122,6 +134,12 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
 
 /* returns bytes written (or error) -- block until all bytes written */
 func (conn *VTCPConn) VWrite(data []byte) (int, error) {
+	/* check that we are in a state that can write */
+	state := conn.socketEntry.state
+	if state == FIN_WAIT_1 ||  state == FIN_WAIT_2 || state == TIME_WAIT || state == LAST_ACK || state == CLOSED {
+		return 0, errors.New("Connection closing")
+	}
+
 	/* give the data to the conn's sendbuf data channel */
 	sendBuf := conn.sendBuf
 	totalBytesWritten := 0
@@ -146,10 +164,14 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 		if numBytesToWrite > int(spaceInBuf) {
 			numBytesToWrite = int(spaceInBuf)
 		}
+
+		startOffset := totalBytesWritten
+		endOffset := totalBytesWritten + numBytesToWrite
+
 		fmt.Printf("[TCP - VWrite] send buf size before write: %d\n", sendBuf.cBuf.currSize)
-			
-		sendBuf.cBuf.WriteIntoBuf(sendBuf.lbw+1, data[:numBytesToWrite])
-		start:= sendBuf.lbw+1
+
+		sendBuf.cBuf.WriteIntoBuf(sendBuf.lbw+1,data[startOffset:endOffset])
+		start := sendBuf.lbw+1
 		sendBuf.lbw += uint32(numBytesToWrite)
 		totalBytesWritten += numBytesToWrite
 
@@ -164,7 +186,6 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 		}
 	}
 
-
 	return totalBytesWritten, nil
 }
 
@@ -174,12 +195,23 @@ The returned error is nil on success, io.EOF if other side of
 connection has finished, or another error describing other failure cases.
 */
 func (conn *VTCPConn) VRead(buf []byte) (int, error) {
+	state := conn.socketEntry.state
+	/* check that we are in ESTABLISHED state */
+	if state == FIN_WAIT_1 ||  state == FIN_WAIT_2 || state == TIME_WAIT || state == LAST_ACK || state == CLOSED {
+		return 0, errors.New("Connection closing")
+	}
+
 	/* loop so that we block until data is ready */
     for {
 		/* lock mutex before accessing fields */
         conn.recvBuf.mu.Lock()
 		/* if current size == 0, no new data in buffer, need to wait for signal to read */
         if conn.recvBuf.cBuf.currSize == 0 {
+			/* if state is CLOSE_WAIT -> other side is done sending, so we can send EOF */
+			if conn.socketEntry.state == CLOSE_WAIT {
+				conn.recvBuf.mu.Unlock()
+				return 0, io.EOF
+			}
             conn.recvBuf.mu.Unlock()
             <-conn.recvBuf.dataToRead  /* wait for signal that new data exists */
             continue
@@ -198,6 +230,77 @@ func (conn *VTCPConn) VRead(buf []byte) (int, error) {
         return numBytesRead, nil
     }
 }
+
+func (listener *VTCPListener) VClose() error {
+	entry := listener.socketEntry
+	if entry.state != LISTEN {
+		return errors.New("connection closing")
+	}
+	/* check if listen socket: */
+	if entry.state == LISTEN {
+		listener := entry.listenSocket
+		if !listener.acceptingConns {
+			return errors.New("connection already closed")
+		}
+		listener.acceptingConns = false
+		entry.state = CLOSED
+		/* tell socket table to remove us, enter CLOSED state, and return  */
+		entry.listenerTeardown()
+	}
+	return nil
+}
+
+/* should be a function on *VTCPListener or *VTCPConn but we can't rlly do that because sendFIN needs 
+	entry and so does removing listen socket from table -> solved by adding socketEntry pointer
+	should error if listen socket is already closed...but like how would we know that*/
+
+/* RFC Specs on Closing:
+
+CLOSED STATE (i.e., TCB does not exist)
+
+If the user does not have access to such a connection, return "error: connection illegal for this process".
+Otherwise, return "error: connection does not exist".
+
+SYN-SENT STATE: Delete the TCB and return "error: closing" responses to any queued SENDs, or RECEIVEs.
+
+SYN-RECEIVED STATE: If no SENDs have been issued and there is no pending data to send, 
+then form a FIN segment and send it, and enter FIN-WAIT-1 state; otherwise, queue for processing 
+after entering ESTABLISHED state.
+*/
+
+func (conn *VTCPConn) VClose() error {
+	entry := conn.socketEntry
+
+	/* already in closing process */
+	if entry.state == FIN_WAIT_1 || entry.state == FIN_WAIT_2 || entry.state == CLOSED || entry.state == LAST_ACK || entry.state == TIME_WAIT {
+		return errors.New("Connection already closing")
+	}
+
+	/* this is where we actually send the FIN */
+	if entry.state == ESTABLISHED || entry.state == CLOSE_WAIT {
+		/* wait until send buf is empty before sending FIN */
+		fmt.Println("[VCLOSE] waiting for sendbuf to empty before sending FIN")
+		for {
+			conn.sendBuf.mu.Lock()
+			noneInFlight := conn.sendBuf.nxt <= conn.sendBuf.una
+			noneUnsent := conn.sendBuf.lbw < conn.sendBuf.nxt
+			conn.sendBuf.mu.Unlock()
+			
+			if noneInFlight && noneUnsent {
+				break
+			}
+			/* wait a tiny bit before checking again */
+			time.Sleep(10 * time.Millisecond)
+		}
+		entry.sendFin()
+	} else {
+		fmt.Println("Strange case ocurred--VClose somehow called during handshake")
+		return errors.New("Attempted closing during handshake")
+	}
+
+	return nil
+}
+
 
 
 /* verify that random port doesn't conflict with existing connection in table */

@@ -37,7 +37,6 @@ func (tcp *TCPStack) HandleREPLCommands() {
 			go tcp.aCommand(port) // so REPL dont block
 		case "c":
 			/* connect */
-			fmt.Println("c command recognized in TCP")
 			if len(parts) != 3 {
 				fmt.Println("Usage: c <vip> <port>")
 				continue
@@ -104,7 +103,7 @@ func (tcp *TCPStack) HandleREPLCommands() {
 		/* send file sf path/to/some_file 10.1.0.2 9999 */
 		case "sf":
 			if len(parts) != 4 {
-				fmt.Println("Usage: rf <srcFilePath> <Receiver IP> <Receiver PortNum>")
+				fmt.Println("Usage: sf <srcFilePath> <Receiver IP> <Receiver PortNum>")
 				continue
 			}
 			portInt, err := strconv.Atoi(parts[3])
@@ -116,12 +115,23 @@ func (tcp *TCPStack) HandleREPLCommands() {
 				fmt.Println("Port must be a number 0-65535")
 				continue
 			}
-			addr, err := netip.ParseAddr(parts[1])
+			addr, err := netip.ParseAddr(parts[2])
 			if err != nil {
-				fmt.Println("Invalid IP Format: ", parts[1])
+				fmt.Println("Invalid IP Format: ", parts[2])
 				continue
 			}
 			go tcp.sfCommand(parts[1], addr, portInt)
+		case "cl": /* cl <socketID> */
+			if len(parts) != 2 {
+				fmt.Println("Usage: cl <socketID>")
+				continue
+			}
+			sID, err := strconv.Atoi(parts[1])
+			if err != nil {
+				fmt.Println("Socket ID must be an integer")
+				continue
+			}
+			go tcp.clCommand(sID)
 		case "ls":
 			tcp.socketTable.listSockets()
 		case "d":
@@ -146,28 +156,6 @@ func (tcp *TCPStack) HandleREPLCommands() {
 				continue
 			}			
 			tcp.prqCommand(sID)
-		case "ps":
-			if len(parts) != 2 {
-				fmt.Println("Usage: ps <socketID>")
-				continue
-			}
-			sID, err := strconv.Atoi(parts[1])
-			if err != nil {
-				fmt.Println("Socket ID must be an integer")
-				continue
-			}
-			tcp.pSendBuf(sID)
-		case "pr":
-			if len(parts) != 2 {
-				fmt.Println("Usage: pr <socketID>")
-				continue
-			}
-			sID, err := strconv.Atoi(parts[1])
-			if err != nil {
-				fmt.Println("Socket ID must be an integer")
-				continue
-			}
-			tcp.pRecvBuf(sID)
 		default:
 			fmt.Println("Unknown TCP command")
 		}
@@ -183,23 +171,20 @@ func (tcp *TCPStack) aCommand(port uint16) {
 	}
 
 	for {
-		fmt.Printf("Accepting connections on port %d\n", port)
-		conn, err := listener.VAccept()
+		_, err := listener.VAccept()
 		if err != nil {
 			fmt.Println("Accept error:", err)
 			return
 		}
-		fmt.Println("Accepted connection", conn)
 	}
 }
 
 func (tcp *TCPStack) cCommand(addr netip.Addr, port uint16) {
-    conn, err := tcp.VConnect(addr, port)
+    _, err := tcp.VConnect(addr, port)
     if err != nil {
         fmt.Println("Connect error:", err)
         return
     }
-    fmt.Println("Connected!", conn)
 }
 
 /* call VWrite after finding correct socket entry in table */
@@ -216,7 +201,7 @@ func (tcp *TCPStack) sCommand(socketNum int, data []byte) {
 		fmt.Printf("%d bytes written to socket %d\n", bytesWritten, socketNum)
 		return
 	} else {
-		fmt.Printf("Error with VWrite: %s", err)
+		fmt.Printf("VWrite error: %s", err)
 		return
 	}
 }
@@ -265,10 +250,13 @@ func (tcp *TCPStack) rfCommand(destFile string, portNum int) {
 
 	/* close file eventually */
 	defer file.Close()
+	defer listener.VClose()
 
 	/* read one page at a time */
 	buf := make([]byte, 4096)
 	
+	totalBytesRead := 0
+
 	/* read file data sent to conn 
 		if VRead blocks until data is ready, how will 
 		we ever know if it's done?
@@ -294,9 +282,17 @@ func (tcp *TCPStack) rfCommand(destFile string, portNum int) {
 				fmt.Println("File write error: ", writeErr)
 				return
 			}
+			totalBytesRead += numBytesRead
 		}
 	}
 
+	fmt.Printf("Received %d total bytes\n", totalBytesRead)
+
+	err = conn.VClose()
+	if err != nil {
+		fmt.Println("[rfCommand] vclosed called, close error: ", err)
+		return
+	}
 }
 
 /* write file */
@@ -317,6 +313,8 @@ func (tcp *TCPStack) sfCommand(srcFile string, addr netip.Addr, portNum int) {
     }
 	defer file.Close()
 
+	totalBytesWritten := 0
+
 	/* need a buffer to read from file -> put that buf in VWrite */
 	buf := make([]byte, 4096) /* page size */
 	for {
@@ -327,7 +325,7 @@ func (tcp *TCPStack) sfCommand(srcFile string, addr netip.Addr, portNum int) {
 			return
 		}
 		if bytesRead > 0 {
-			bytesWritten, writeErr := conn.VWrite(buf)
+			bytesWritten, writeErr := conn.VWrite(buf[:bytesRead])
 			if writeErr != nil {
 				fmt.Println("VWrite error:", writeErr)
                 return
@@ -336,6 +334,7 @@ func (tcp *TCPStack) sfCommand(srcFile string, addr netip.Addr, portNum int) {
 				fmt.Printf("Error with VWrite: wrote only %d bytes instead of the full %d bytes read\n", bytesWritten, bytesRead)
 				return
 			}
+			totalBytesWritten += bytesWritten
 		}
 		/* written whole file -> check AFTER read because apparently in Go
 			Read() can return error EOF and bytes read */
@@ -343,10 +342,35 @@ func (tcp *TCPStack) sfCommand(srcFile string, addr netip.Addr, portNum int) {
 			break
 		}
 	}
+	fmt.Printf("Sent %d total bytes\n", totalBytesWritten)
+	fmt.Println("[SENDFILE] Finishing writing, closing connection ")
+	err = conn.VClose()
+	if err != nil {
+		fmt.Println("[sfCommand] vclosed called, close error: ", err)
+		return
+	}
+}
 
-	/* TODO: close connection */
-	/* conn.VClose() */
-	return
+/* close socket with given ID */
+func (tcp *TCPStack) clCommand(socketNum int) {
+	tcp.socketTable.mu.Lock()
+    socket, exists := tcp.socketTable.socketMap[socketNum]
+    tcp.socketTable.mu.Unlock()
+
+	if !exists {
+		fmt.Println("Socket does not exist")
+		return
+	}
+
+	if socket.state == LISTEN {
+		if socket.listenSocket != nil {
+			socket.listenSocket.VClose()		
+		}
+	} else {
+		if socket.normalSocket != nil {
+			socket.normalSocket.VClose()
+		}
+	}
 }
 
 // command for testing retransmissions by configuring the host to drop all packets in handlePayload()
@@ -430,6 +454,18 @@ func stateToString(s int) string {
 		return "SYN-RECVD"
 	case ESTABLISHED:
 		return "ESTABLISHED"
+	case FIN_WAIT_1:
+		return "FIN_WAIT_1"
+	case CLOSE_WAIT:
+		return "CLOSE_WAIT"
+	case LAST_ACK:
+		return "LAST_ACK"
+	case FIN_WAIT_2:
+		return "FIN_WAIT_2"
+	case TIME_WAIT:
+		return "TIME_WAIT"
+	case CLOSED:
+		return "CLOSED"
 	default:
 		return "?"
 	}
@@ -499,46 +535,7 @@ func (tcp *TCPStack) getNormalSocket(socketNum int) (*VTCPConn) {
 		fmt.Println("Socket table does not have TCPConn associated yet")
 		return nil
 	}
-	/* check that conn is established */
-	if socket.state != ESTABLISHED {
-		fmt.Printf("Connection with %d not ESTABLISHED\n", socketNum)
-		return nil
-	}
 
 	return socket.normalSocket
 }
 
-// NOTE: these no longer work, was for testing with simple arrays
-
-func (tcp *TCPStack) pSendBuf(socketNum int) {
-	socket := tcp.getNormalSocket(socketNum)
-	if socket == nil {
-		return
-	}
-
-	sendBuf := socket.sendBuf
-	sendBuf.mu.Lock()
-	defer sendBuf.mu.Unlock()
-
-	printBufferWithPointers(sendBuf.cBuf.buf, sendBuf.base, 10, []BufPointer{
-		{seq: sendBuf.una, mark: "U"},
-		{seq: sendBuf.nxt, mark: "N"},
-		{seq: sendBuf.lbw, mark: "L"},
-	})
-}
-
-func (tcp *TCPStack) pRecvBuf(socketNum int) {
-	socket := tcp.getNormalSocket(socketNum)
-	if socket == nil {
-		return
-	}
-
-	recvBuf := socket.recvBuf
-	recvBuf.mu.Lock()
-	defer recvBuf.mu.Unlock()
-
-	printBufferWithPointers(recvBuf.cBuf.buf, recvBuf.cBuf.baseSeq, 10, []BufPointer{
-		{seq: recvBuf.lbr, mark: "R"},
-		{seq: recvBuf.nxt, mark: "N"},
-	})
-}

@@ -2,39 +2,54 @@ package tcpstack
 
 /*
 
-Recent changes:
+Updates as of 4/20 early morning -
+	- 	ZWP: zwp is working per my manual testing across a variety of scenarios, but still can't say for certain
+		but it's very close if not fully functional
+	- 	SF/RF: i have been testing sf and rf and they are working for images:
+		- 	there's a testBig and testSmall which are images i have sf'd, for testBig i sent it with a max MSS
+			and WIN and also with MSS=1 and WIN=10 and it was good (it took 3 hours to send)
+			-	testBigRes-1.jpg: sent with MSS=1, WIN=10
+			-	testBigRes-2.jpg: sent with MSS=1360, WIN=65535
+			- 	NOTE: currently sending is configured to MSS=1360, WIN=65535
+			-	*NOTE*: i have not checked results with hashing, only inspecting the image. consider hash check
+		- 	i've created some additional nets that are clones of linear-r1h2 (linear-r1h2a, linear r1h2c) for
+			which you may need to generate the LNX files, but they exist and are useful if you want to do
+			several large sf's concurrently
+	-	CLOSING: i've only fixed enough bugs insofar as to get closing to work after sf/rf, it seems to be now
+		- 	some of the bugs you noted below have been fixed as a result, some are still outstanding (refer to
+			updates below)
+		-	sfCommand and rfCommand have been updated to work with vclose and do so cleanly
+			- 	for awhile i was running into deadlocks or other segfaults at the end with the closing on
+				occasion; i haven't run into an issue in awhile now but not sure this is fully resolved, likely no
 
-4. Receiving ---------------------------------------------------------------------------------------> done. did a decent amount of testing, decently confident
-    - I think Acks are being sent but not sure if they're correct--verify that ---------------------> they are now and should be correct
-        - write method to handle ack and then do the things below ----------------------------------> done
-    - passing information from ACK to sending thread -----------------------------------------------> done
-        - sending thread needs to know window size and keep track of data IN FLIGHT and
-            compare those numbers before sending new data ------------------------------------------> done
-        - we aren't doing this at all yet
-5. Circular buffer ---------------------------------------------------------------------------------> it is implemented with light testing indicating it's working.
-    - Make a circular buffer struct that has methods for indexing, etc and add to send & recv buf     more testing is needed however. you can test edge cases by
-                                                                                                      changing MAX_WIN_SIZE in types.go from 65k to like 15
+TODO: 	right now SF/RF are printing the entire file contents (for debugging purposes). Obviously this doesn't
+		conform to spec; don't bother removing any prints right now. next thing i'll deal with is writing some
+		command-wide flag or var called "verbose" or something and if it's flipped we'll have the prints, otherwise
+		it hides all the prints. i will do sometime monday
 
-NEXT STEPS/TODO:s:
-    - check that the circleBuf slop is looking ok -- seems fine?
-        - I did get to a point where I ran into a ZWP crash, so ZWP likely needs to be implemented to make progress on this -- next milestone
-        - My wireshark must be broken bc I can't see any packets, so the testing was all through prints so impl could be a bit sus,
-          so if you can do this I would recommend checking there --done, looks good
-    - handle early arrivals. i don't actually think this should be too bad at all, min heap plus an extra check in HandlePayload()
-    - much further down the line but from here I think it's beginning sf and rf repl commands?
 
-NOTES:
-- per RFC: default MSS is 536 (max segment size) // TODO: i'm not enforcing this yet, should we? -ben
-	- NO--doesn't have to be 536, but does have to adhere to this:
-	As in the IP assignment, never send packets greater than the MTU.
-	For our link layer, the maximum MTU is 1400 bytes:
-	any TCP segments you send must be no larger than the MTU–therefore,
-	the maximum TCP payload size is: 1400 bytes - (size of IP header) - (size of TCP header)
+RUNNING BUGS/PROBLEMS LIST:
+- (really high priority) deadlock on send buffer in teardown for PASSIVE 		----------------> had a stab at this with some fixes, across my manual testing it's not happening but could still be issue
+- (high priority) if we send a SYN to the wrong IP/port (i.e they don't exist)
+	we create an entry in the table that never moves past SYN-SENT state and is never removed --> not fixed
+- (low priority) busy-wait for send buf to be empty in VClose ----------------------------------> there was a bug IN the busy waiting that i fixed but it's still busy waiting
 
-	This means  MSS is 1360 i think? maybe we should verify this...Verified: we can set MSS to whatever we want!
 
-// TODO: small, refactor tcpHeader = SEGheader or something to make things much less confusing
-// TODO: low prio/long term, look into if seqNum field is even necessary in table entry. may not be
+For state stuff:
+- don't worry about stuff that couldn't happen in this project
+
+if FIN arrives early:
+- save state for "seen FIN" and check at the end of early arrivals queue check
+
+For timeout case:
+- print something, delete socket/connection and table entry, that's it
+
+TODO: TIMEOUT CONNECTION AFTER X RETRANSMISSIONS (rfc MUST-20): Can just pick a maximum number of retransmissions, abort if this threshold is exceeded.
+Value does not need to be associated with a specific time interval (though you may want to set a minimum time interval, eg. 5s, before the connection aborts) -----> TBD but should be simple fix
+
+TODO: RFC MUST-66: Receiving an RST MUST always immediately terminate the connection.  Can always ignore URG flag.	-----------------------------------------------> also TBD
+
+TODO: read through socket API description in handout and make sure we're returning errors properly
 
 */
 
@@ -43,7 +58,6 @@ import (
 	"fmt"
 	utils "ip-isabelle-and-ben/pkg/protocol"
 	"net/netip"
-	"strings"
 	"time"
 
 	ipv4header "github.com/brown-csci1680/iptcp-headers"
@@ -56,10 +70,8 @@ not sure if we need the IP header here but will leave for now
 func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 	table := tcp.socketTable
 
-	fmt.Println("[TCP] HandleTCP called, parsing and validating TCP message")
-
 	/* 1. parse TCP header and extract message body */
-	tcpHdr, tcpPayload, err := utils.ParseAndValidateTCP(hdr, payload) // TODO: re-add tcpData when we need. Its "_" right now because no use, so to turn off compiler warning
+	tcpHdr, tcpPayload, err := utils.ParseAndValidateTCP(hdr, payload)
 	if err != nil {
 		/* checksum failed */
 		fmt.Printf("Error: %s\n", err.Error())
@@ -71,6 +83,7 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 		/* didn't find match */
 		fmt.Println("[TCP] No normal or listener socket open that matches the following:")
 		fmt.Printf("Src Port: %s\nSrc IP: %s\n Dest Port: %s\n Dest IP: %s\n", string(tcpHdr.SrcPort), hdr.Src.String(), string(tcpHdr.DstPort), hdr.Dst.String())
+		return
 	} 
 	
 	// PrintSocketTableEntry(socketEntry)
@@ -80,39 +93,46 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 	case LISTEN:
 		/* we matched the listen socket--so we should be getting an initial SYN */
 		/* should pass in IP Source as OUR DEST and IP Dest as OUR SOURCE since this is FROM REMOTE */
-		fmt.Println("[TCP] Packet sent to listen socket--starting 3-way handshake")
 		tcp.handleSyn(socketEntry.listenSocket, tcpHdr, hdr.Dst, hdr.Src)
 		return
 	case SYN_RECEIVED:
-		fmt.Println("[TCP] handler received packet in state SYN-RECEIVED -> handling ACK")
 		tcp.handleAckHandshake(socketEntry, tcpHdr)
 	case SYN_SENT:
-		fmt.Println("[TCP] handler received packet in state SYN-SENT -> handling SYN-ACK")
 		tcp.handleSynAck(socketEntry, tcpHdr)
-	case ESTABLISHED:
-		fmt.Println("[TCP] handler received packet in state ESTABLISHED -> handling flags and/or payload")
-
+	case ESTABLISHED, FIN_WAIT_2, FIN_WAIT_1, CLOSE_WAIT:
+		/* FIN_WAIT_2 is valid here because we can still receive packets */
 		switch {
-		/* FIN specified */
+		/* FIN specified -> we are passive side and should ACK that FIN */
 		case tcpHdr.Flags & header.TCPFlagFin != 0:
-			// TODO: teardown
-			return
-		/* Reset specified -- immediately abort connection */
-		case tcpHdr.Flags&header.TCPFlagRst != 0:
-			// TODO: handle later
+			socketEntry.handleFin(tcpHdr) /* this will either ACK fin or tell recvBuffer we got FIN early */
 			return
 		/* data ACK */
 		case tcpHdr.Flags & header.TCPFlagAck != 0 && len(tcpPayload) == 0:
-			fmt.Println("[TCP - HandleTCP] recvd pureAck, handling")
+			if socketEntry.state == FIN_WAIT_2 {
+				fmt.Println("weirdness--we should not be getting an ack in FIN_WAIT_2")
+			}
+			fmt.Printf("[TCP - HandleTCP] received ACK for seg: %d\n", tcpHdr.AckNum)
 			socketEntry.handlePureAck(tcpHdr)
 			return
-		/* invalid/empty packet */
+		/* invalid/empty packet that isn't FIN or pure ACK */
 		case len(tcpPayload) < 1:
 			fmt.Println("[TCP - HandleTCP] recvd full empty packet, dropping")
 			return
 		}
 		// note - may be other flags to handle in this case, to add if so
 		socketEntry.handlePayload(tcpHdr, tcpPayload) // put into recvBuf and handle all effects
+	case TIME_WAIT:
+		fmt.Println("Error: Received packet in TIME_WAIT state. Dropping.")
+		return
+	case LAST_ACK:
+		/* if we are in this state, both sides are done sending data -> 
+		this is our cue to close everything -> we should ONLY receive an ACK */
+		if !(tcpHdr.Flags & header.TCPFlagAck != 0 && len(tcpPayload) == 0) {
+			fmt.Println("Error: received a non-ACK packet in LAST_ACK state")
+			return
+		} else {
+			socketEntry.handlePureAck(tcpHdr)
+		}
 	default:
 		fmt.Printf("No known state that matches: %d\n", socketEntry.state)
 	}
@@ -158,14 +178,6 @@ func (table *SocketTable) tableMatch(srcPort uint16, srcIP netip.Addr, destPort 
 
 /* 
 	Calls SendIP where message is the TCP packet
-	takes in TCP Header because otherwise params would be insane
-
-	TODO: probably implement timeouts here for Milestone 1? I think that's in the handout
-		// TODO: reply from ben, i think not per this from handout:
-				For this milestone, you SHOULD NOT attempt to implement retransmissions for dropped 
-				handshake packets. Instead, we recommend leaving this for the final stage, when you’ll 
-				build a generic implementation for retransmissions that works with data packets too.
-
 */
 func (tcp *TCPStack) sendTCP(sendReq *SendRequest) {
 	
@@ -189,9 +201,6 @@ func (tcp *TCPStack) sendTCP(sendReq *SendRequest) {
 
 	/* call SendIP */
 	tcp.ipStack.SendIP(destIP, ipPacketPayload, 6)
-	fmt.Printf("[TCP] SendTCP sent message from SRC: %s to DST: %s\n", srcIP.String(), destIP.String())
-
-	/* TODO: return bytes written/sent? */
 }
 
 /* initialize send and receive buffers in Conn obj */
@@ -201,19 +210,23 @@ func (entry *SocketTableEntry) initBufs(otherSideSeq uint32) {
 		cBuf: sendCBuf,
 		dataWrittenToBuf: make(chan struct{}, 1),
 		spaceAvailable: make(chan struct{}, 1),
+		otherSideWindowUpdated: make(chan struct{}, 1),
+		zwpTrigger: make(chan struct{}, 1),
 		otherSideWindow: MAX_WIN_SIZE,
+		isProbing: false,
 	}
 	recvCBuf := NewCircleBuf(MAX_WIN_SIZE, otherSideSeq)
 	recvBuf := &RecvBuf{
 		cBuf: recvCBuf,
 		dataToRead: make(chan struct{}, 1), 
+		fin: 0,
 	}
 
 	/* init pointers */
 	ourSeqNum := entry.seqNum
 
 	/* send buf --uses OUR (this side's) sequence numbers */
-	sendBuf.una = ourSeqNum // keep for now until end of mstone2. see UNA field in types for reasoning. TODO: verify if needed after mstone2
+	sendBuf.una = ourSeqNum // keep for now until end of mstone2. see UNA field in types for reasoning.
 	sendBuf.nxt = ourSeqNum /* next sequence num to send */
 	sendBuf.lbw = ourSeqNum-1 /* last byte written by app, next write starts at lbw+1 */
 
@@ -251,12 +264,13 @@ RCV.NXT =< SEG.SEQ+SEG.LEN-1 < RCV.NXT+RCV.WND
 
 */
 func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload []byte) error {
-	fmt.Println("Packet being handled by receiver in handlePayload")
-
 	// flag is flipped to get recvr to drop all packets for the purpose of testing retransmissions
 	if entry.dropForRetrans {
-		fmt.Println("[TCP - handlePayload] flag dropForRetrans = true, DROPPING SEGMENT")
-		return nil
+		/* for testing: only drop packet 50% of the time */
+		if time.Now().UnixNano()%2 == 0 {
+			fmt.Printf("[TCP - handlePayload] flag dropForRetrans + coin flip = true, DROPPING SEGMENT %d\n", tcpHeader.SeqNum)
+			return nil
+		}
 	}
 
 	// prior logic already handles empty payloads, assume len(payload) > 0
@@ -278,18 +292,21 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 
 	/* old/redundant segment -- seqNum of segment less than NXT - TODO technically we are supposed to discard payload and send an ack back*/
 	if tcpHeader.SeqNum < recvBuf.nxt {
-		fmt.Println("[TCP HANDLE PAYLOAD] Got redundant segment, dropping packet")
+		ackNum := recvBuf.nxt
+		fmt.Println("[TCP HANDLE PAYLOAD] Got redundant segment, sending back old ack")
 		recvBuf.mu.Unlock()
+		entry.sendPureAck(ackNum)
 		return nil
 	}
 
 	/* else, must be the segment number we're looking for */
 
-	/* quick space check before writing -- shouldn't be neccesary if sender works right */
+	/* quick space check before writing */
 	space := int(recvBuf.cBuf.FreeSpace())
 	if space == 0 {
-		fmt.Println("[TCP - handlePayload] Space in recv buffer is 0--should not be sending this packet")
+		fmt.Println("[TCP - handlePayload] bufSpace=0, sending ZWP ack")
 		recvBuf.mu.Unlock()
+		entry.sendPureAck(recvBuf.nxt)
 		return nil
 	}
 	if len(payload) > space {
@@ -311,18 +328,30 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 	/* drain early arrival heap of any segments that can now fit */
 	for {
 		min := recvBuf.earlyArrivals.Peek()
-		/* nothing in heap or min num is not our nxt pointer */
-		if min == nil || min.startSeq != recvBuf.nxt {
+		/* if nothing in heap -> no early arrivals or we have already drained it -> check for FIN before breaking */
+		if min == nil {
+			/* checks if we have early FIN and deals with it if necessary */
+			recvBuf.mu.Unlock()
+			entry.handleEarlyFin() /* handle early fin needs to lock mutex-> give it mu unlocked*/
+			recvBuf.mu.Lock()
+			break
+		}
+
+		/* if our min seq num is not our nxt pointer, break */
+		if min.startSeq != recvBuf.nxt {
 			break
 		}
 		/* if not enough space in the recv buffer for full segment, just abandon ship 
-			TODO--verify if that is okay 
 			- this means we will advertise win=X where X < Max Segment Size
 			- sender will send another segment of that size and then ZWP will start so we're good */
 		space := int(recvBuf.cBuf.FreeSpace())
 		if len(min.data) > space {
+			fmt.Print("Got to case where first segment in early arrivals is longer than receive buf available space. Space in buf: %d, Size of segment: %d\n",
+						space, len(min.data))					
 			break
 		}
+
+		fmt.Printf("Popping early arrival from queue: %s\n", min.data)
 
 		/* actually take out minimum segment and write to recv buffer */
 		segment := recvBuf.earlyArrivals.PopMin()
@@ -331,7 +360,7 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 	}
 
 	/* ------ print receive buffer for debugging ----- */
-	fmt.Printf("state: base=%d nxt=%d lbr=%d currSize=%d payLen=%d\n", recvBuf.cBuf.baseSeq, recvBuf.nxt, recvBuf.lbr, recvBuf.cBuf.currSize, payLen)
+	// fmt.Printf("state: base=%d nxt=%d lbr=%d currSize=%d payLen=%d\n", recvBuf.cBuf.baseSeq, recvBuf.nxt, recvBuf.lbr, recvBuf.cBuf.currSize, payLen)
 	fmt.Printf("copied bytes: %q\n", recvBuf.cBuf.SliceFrom(tcpHeader.SeqNum, payLen))
 	if recvBuf.cBuf.currSize > 0 {
 		fmt.Printf("entire readable region: %q\n",recvBuf.cBuf.SliceFrom(recvBuf.lbr+1, recvBuf.cBuf.currSize))
@@ -353,7 +382,7 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 // send "pure" ack, i.e. no payload, passive side sends
 func (entry *SocketTableEntry) sendPureAck(otherSideSeq uint32) error {
 	tcpHdr := &header.TCPFields{
-		SrcPort:       entry.localPort, // TODO: verify
+		SrcPort:       entry.localPort,
 		DstPort:       entry.destPort,
 		SeqNum:        entry.seqNum,
 		AckNum:        otherSideSeq,
@@ -376,14 +405,14 @@ func (entry *SocketTableEntry) sendPureAck(otherSideSeq uint32) error {
 }
 
 /* creates tcp header and calls send method to send segment to receiving end of conn */
-func (entry *SocketTableEntry) sendSegment(segment []byte, seqNum uint32) error {
+func (entry *SocketTableEntry) sendSegment(segment []byte, seqNum uint32, flags uint8) error {
 	tcpHdr := &header.TCPFields{
 		SrcPort:       entry.localPort,
 		DstPort:       entry.destPort,
 		SeqNum:        seqNum,
 		AckNum:        entry.normalSocket.recvBuf.nxt,
 		DataOffset:    20,
-		Flags:         header.TCPFlagAck, /* data should be type ACK */
+		Flags:         flags, /* ACK is always set after conn established */
 		WindowSize:    entry.normalSocket.recvBuf.getAvailableWindow(),
 		Checksum:      0,
 		UrgentPointer: 0,
@@ -429,17 +458,45 @@ window
 // receive a pure ack and update our side's fields accordingly.
 // 		currently, this consists of:
 //			- sendBuf.otherSideWindow, tracking of the other side's available window size
-// 			- sendBuf.una, we may want to use an enqueue-inflight-data structure for retrans but for now it is needed (TODO: revisit)
+// 			- sendBuf.una
 func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 	sendBuf := socketEntry.normalSocket.sendBuf
 	sendBuf.mu.Lock()
 	defer sendBuf.mu.Unlock()
 
-	// ------------------  TODO: test edge cases once circular array is up --------------
+	if seg.AckNum > sendBuf.nxt { // RFC: If the ACK acks something not yet sent (SEG.ACK > SND.NXT), then send an ACK, drop the segment, and return
+		if sendBuf.isProbing && seg.AckNum == sendBuf.nxt+1 {
+			ackedBytes := seg.AckNum - sendBuf.una // should be 1
+			sendBuf.otherSideWindow = seg.WindowSize
+			sendBuf.una = seg.AckNum
+			sendBuf.nxt = seg.AckNum
+			socketEntry.seqNum = sendBuf.nxt
+			sendBuf.cBuf.AdvanceBase(ackedBytes)
+
+			// unblock vwrite on a full send buffer
+			select {
+			case sendBuf.spaceAvailable <- struct{}{}:
+			default:
+			}
+
+			// signal sendLoop to keep probing or do normal sends
+			select {
+			case sendBuf.otherSideWindowUpdated <- struct{}{}:
+			default:
+			}
+			return nil
+		}
+		fmt.Println("[TCP - handlePureAck] condition seg.AckNum > sendBuf.nxt, no fix implemented yet, dropping")
+		return nil
+	}
+
+	// update immediately for zwp
+	sendBuf.otherSideWindow = seg.WindowSize // update new window size
+	fmt.Printf("[TCP - handlePureAck] sender got new recvr window size: %d\n", sendBuf.otherSideWindow)
 
 	// RFC: SND.UNA < SEG.ACK <= SND.NXT -> ACK num of segment is less than or equal to our next Sequence Num (in our send buf)
 	if sendBuf.una < seg.AckNum && seg.AckNum <= sendBuf.nxt {
-		fmt.Println("[TCP - handlePureAck] adjusting UNA to seg.AckNum")
+		// fmt.Println("[TCP - handlePureAck] adjusting UNA to seg.AckNum")
 		ackedBytes := seg.AckNum - sendBuf.una /* num bytes accounted for via this ACK */
 		sendBuf.una = seg.AckNum /* move UNA up */
 		/* adjust internals of circular buffer to reflect num bytes Acked */
@@ -473,6 +530,10 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 		retransQueue.timer.Stop()
 
 		var ackedEntry *RetransmissionEntry
+
+		// NOTE FOR ZWP: 	we DO NOT need to slice off one byte from the head of the RQ when a ZWP byte gets acked because 
+		//					there will NEVER be data in flight when we enter ZWP (recv cannot ack ZWP byte if data in flight)
+		
 		// update queue head: pop from head repeatedly until we get the segement we just ack'd popped
 		for len(retransQueue.array) > 0 && retransQueue.array[0].seqNum + retransQueue.array[0].len <= seg.AckNum {
 			ackedEntry = retransQueue.array[0] // we need entry's .sent time field to calculate RTT
@@ -482,7 +543,7 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 
 		// update RTO
 		if ackedEntry != nil && !ackedEntry.retransmitted { // if duplicate ack, ackedEntry will be null, and if retrans we don't want to update (Karn's)
-			fmt.Println("[TCP - handlePureAck] RTO: updating RTO given new recvd ack")
+			fmt.Printf("[TCP - handlePureAck] RTO: updating RTO given new recvd ack for seg %d\n", ackedEntry.seqNum)
 			err := retransQueue.updateRto(ackedEntry.getRtt())
 			if err != nil {
 				fmt.Println("[TCP - handlePureAck] error: update RTO failed")
@@ -493,20 +554,34 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 		// 5.3: if queue still has data in flight (entries), then restart the timer
 		if len(retransQueue.array) > 0 {
 			fmt.Println("[TCP - handlePureAck] 5.3 RTO: still data in flight, restarting timer")
-			socketEntry.startRtoTimer()
+			retransQueue.timer = socketEntry.startRtoTimer()
 		}
 
 		retransQueue.mu.Unlock()
+
+		/* check if we are closing and our FIN got ACKED, switch state
+			we should not receive more ACKs again , and FIN should have just been
+			removed from retransmission queue */
+		if socketEntry.state == FIN_WAIT_1 && seg.AckNum == sendBuf.nxt {
+			fmt.Println("Received ACK for FIN as Active Closer. Switching to FIN_WAIT_2")
+			socketEntry.state = FIN_WAIT_2
+		}
+
+		if socketEntry.state == LAST_ACK && seg.AckNum == sendBuf.nxt {
+			fmt.Println("Received ACK for FIN as Passive Closer. Switching to CLOSED state")
+			/* go deal with teardown now and DON'T try and tell sendBuf that there is space */
+			sendBuf.mu.Unlock()
+			socketEntry.handleLastAck()
+			sendBuf.mu.Lock()
+			return nil
+		}
+
 
 		/* tell sendBuf that there is space */	
 		select {
 		case sendBuf.spaceAvailable <- struct{}{}:
 		default:
 		}
-	} else if seg.AckNum > sendBuf.nxt { // RFC: If the ACK acks something not yet sent (SEG.ACK > SND.NXT), then send an ACK, drop the segment, and return
-		// TODO: implement a sendPureAckForSender(). this is a bit of a pain, since sendPureAck() is for the recv side and thus we need a new version
-		fmt.Println("[TCP - handlePureAck] TODO, condition seg.AckNum > sendBuf.nxt, no fix implemented yet")
-		return nil
 	} else if seg.AckNum <= sendBuf.una { // RFC: If the ACK is a duplicate (SEG.ACK =< SND.UNA), it can be ignored.
 		// we also don't need to update retransQueue since the out-of-order segment will have sliced this segment off already
 		return nil
@@ -514,20 +589,40 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 		fmt.Println("[TCP - handlePureAck] condition should not have been hit")
 		return nil
 	}
-	sendBuf.otherSideWindow = seg.WindowSize // update new window size
-	fmt.Printf("[TCP - handlePureAck] sender got new recvr window size: %d\n", sendBuf.otherSideWindow)
+
+	// ZWP: if window now is 0, trigger sendloop to start 
+	//		should only be triggered when we are NOT probing and want to START probing
+	if sendBuf.otherSideWindow == 0 && sendBuf.lbw >= sendBuf.nxt && !sendBuf.isProbing {
+		fmt.Println("[TCP - handlePureAck] sending signal to zwpTrigger channel")
+		sendBuf.isProbing = true
+		select {
+		case sendBuf.zwpTrigger <- struct{}{}:
+		default:
+		}
+	}
+
+	select {
+	case sendBuf.otherSideWindowUpdated <- struct{}{}:
+	default:
+	}	
 	return nil
 }
 
-/* thread that waits on data in the buffer and sends said data when it's there 
-   TODO: verify there is enough space in the buffer to send. this will rely
-   on some sort of field/data structure that DOES NOT EXIST YET -> need to 
-   know other side's window size and update it with Acks */
+/* ONLY FOR SENDING DATA (NO FINS OR ACKS ) thread that waits on data in the buffer and sends said DATA when it's there */
 func (entry *SocketTableEntry) sendLoop() {
 	conn := entry.normalSocket
+
+	var probeTimer *time.Timer
+
 	for {
-		/* wait for data to be put in buffer by VWrite */
-		<-conn.sendBuf.dataWrittenToBuf
+		/* return if state is closed */
+		if entry.state == CLOSED {
+			return
+		}
+		select {
+		case <-conn.sendBuf.dataWrittenToBuf: 			/* wait for data to be put in buffer by VWrite */
+		case <-conn.sendBuf.zwpTrigger:					// or the trigger from handlePureAck reporrting zero window to start ZWP
+		}
 
 		for { /* added second loop here to deal with MSS (keep sending until all data sent) */
 
@@ -564,12 +659,52 @@ func (entry *SocketTableEntry) sendLoop() {
 			fmt.Printf("[TCP - sendloop] Other side window: %d, Bytes in flight: %d, Window Remaining (OSW - BIF) = %d\n", 
 						sendBuf.otherSideWindow, sendBuf.getBytesInFlight(), windowRemaining)
 
+			// if no windowRemaining, we will always continue and restart the inner for loop
 			if windowRemaining <= 0 {
-				fmt.Println("[TCP - sendloop] no window left") // update: couple hours later, ran into ZWP issue here. TODO:!
-				/* TODO: start zero-window-probing here! */
-				conn.sendBuf.mu.Unlock()
-				break
+				// -------------------------- ZERO WINDOW PROBING ------------------------------
+				// 		if lbw < nxt there is no data to send
+				//		bytesInFlight must be 0 (this should always be the case but double checking)
+				if int(sendBuf.otherSideWindow) == 0 && sendBuf.lbw >= sendBuf.nxt && sendBuf.getBytesInFlight() == 0 {
+					sendBuf.isProbing = true
+					fmt.Printf("[TCP - sendloop] ZWP, sendbuf isProbing: %s\n", sendBuf.isProbing)
+
+					probeSeq := sendBuf.una // una and nxt should be the same (no data in flight). note that entry.seqNum mirrors NXT so that would work too
+					probeByte := sendBuf.cBuf.SliceFrom(probeSeq, 1)
+					sendBuf.mu.Unlock()
+
+					// send probe
+					entry.sendSegment(probeByte, probeSeq, header.TCPFlagAck)
+
+					// start timer for next ZWP
+					// small TODO: add exponential backoff (not strictly required in spec)
+					if probeTimer == nil {
+						probeTimer = time.NewTimer(PROBE_ITV)
+					} else {
+						probeTimer.Reset(PROBE_ITV)
+					}
+
+					select {
+					case <-sendBuf.otherSideWindowUpdated:
+						// a new ack has arrived with a new window size
+						fmt.Println("[TCP - sendloop] TRIGGER sendBuf.otherSideWindowUpdated")
+						continue
+					case <-probeTimer.C:
+						// time to probe again
+						fmt.Println("[TCP - sendloop] TRIGGER probeTimer.C")
+						continue
+					}
+				} else {
+					// when we start ZWP there should never be bytes in flight, so if there are, wait for retransmissions to clear them first
+					fmt.Println("[TCP - sendloop] conditions not met for ZWP, waiting on retransmission")
+					sendBuf.mu.Unlock()
+					// we don't want to busy wait, so block until we get an update on the window
+					<-sendBuf.otherSideWindowUpdated
+					continue
+				}
 			}
+
+			// we have cleared the ZWP check, so turn probing off
+			sendBuf.isProbing = false
 
 			maxBytesSendable := bytesAvailableInBuf
 			if int(maxBytesSendable) > windowRemaining {
@@ -584,7 +719,7 @@ func (entry *SocketTableEntry) sendLoop() {
 			segmentData := sendBuf.cBuf.SliceFrom(sendBuf.nxt, uint32(maxBytesSendable))
 			conn.sendBuf.mu.Unlock()
 
-			if entry.sendSegment(segmentData, entry.seqNum) != nil {
+			if entry.sendSegment(segmentData, entry.seqNum, header.TCPFlagAck) != nil {
 				fmt.Println("[TCP - Send Loop] Error sending segment")
 				break
 			}
@@ -593,6 +728,7 @@ func (entry *SocketTableEntry) sendLoop() {
 			segmentRetransEntry := &RetransmissionEntry{
 				seqNum: entry.seqNum,
 				len: uint32(maxBytesSendable),
+				flags: header.TCPFlagAck,
 				sent: time.Now(),
 				retransmitted: false,
 			}
@@ -646,6 +782,13 @@ func (entry *SocketTableEntry) retransmitSegment() error {
 	retransQueue.mu.Lock()
 	defer retransQueue.mu.Unlock()
 
+	// // Bug is fixed, no longer needed
+	// /* check for length of queue before doing anything -- cannot retransmit something if queue is empty */
+	// if len(retransQueue.array) == 0 {
+	// 	fmt.Println("[Retransmit Segment] -- trying to retransmit but queue is empty. Returning.")
+	// 	return nil
+	// }
+
 	// When RTO timer expires Retransmit earliest unACK’d segment
 	segmentToResend := retransQueue.array[0]
 
@@ -656,7 +799,7 @@ func (entry *SocketTableEntry) retransmitSegment() error {
 	cBuf := entry.normalSocket.sendBuf.cBuf
 	sliceToSend := cBuf.SliceFrom(segmentToResend.seqNum,segmentToResend.len)
 	fmt.Printf("[TCP - retransmitSegment] re-transmitting head of RQ, contents: [ %s ]\n",string(sliceToSend))
-	err := entry.sendSegment(sliceToSend, segmentToResend.seqNum)
+	err := entry.sendSegment(sliceToSend, segmentToResend.seqNum, segmentToResend.flags)
 	if err != nil {
 		fmt.Println("[TCP - RetransmitSegment] Error sending segment")
 		return errors.New("[TCP - RetransmitSegment] bad nested entry.sendSegment call")
@@ -672,6 +815,7 @@ func (entry *SocketTableEntry) retransmitSegment() error {
 	// start the timer again, recursive call
 	retransQueue.timer = entry.startRtoTimer()
 	//	TODO: pretty sure this is expected behavior for it to spin forever waiting for an ack for a retransmission at RTO_MAX in worst case
+	// TODO: implement abandon after X retransmissions
 	return nil
 }
 
@@ -679,7 +823,6 @@ func (retransEntry *RetransmissionEntry) getRtt() time.Duration {
 	return time.Since(retransEntry.sent)
 }
 
-// TODO: double check there is no issue with the consts all being in milliseconds
 // slides formula: SRTT = (⍺ * SRTTLast) + (1 - ⍺)* RTTMeasured
 func (retransQueue *RetransmissionQueue) computeNewSrtt(rtt time.Duration) time.Duration {
 	if retransQueue.srtt == 0 {
@@ -690,86 +833,10 @@ func (retransQueue *RetransmissionQueue) computeNewSrtt(rtt time.Duration) time.
 	return retransQueue.srtt
 }
 
-// TODO: double check there is no issue with the consts all being in milliseconds
 // slides formula: RTO = max(RTOMin, min(β * SRTT, RTOMax))
 func (retransQueue *RetransmissionQueue) updateRto(rtt time.Duration) error {
 	srtt := retransQueue.computeNewSrtt(rtt)
     newRto := time.Duration(RTO_BETA * float64(srtt))
     retransQueue.rto = max(RTO_MIN, min(newRto, RTO_MAX))
 	return nil
-}
-
-// TODO: delete these functions and the repl command associated
-/* ----------------------PRINTING (NON-CIRCL BUF, OBSOLETE NOW------------------*/
-type BufPointer struct {
-	seq  uint32
-	mark string
-}
-
-func printBufferWithPointers(buf []byte, base uint32, upTo int, pointers []BufPointer) {
-	if upTo <= 0 {
-		fmt.Println("[printPointers] upTo must be > 0")
-		return
-	}
-	if upTo > len(buf) {
-		upTo = len(buf)
-	}
-
-	vals := make([]string, upTo)
-	for i := 0; i < upTo; i++ {
-		if buf[i] == 0 {
-			vals[i] = padCell(".")
-		} else {
-			vals[i] = padCell(string(buf[i]))
-		}
-	}
-
-	marks := make([]string, upTo)
-	for i := 0; i < upTo; i++ {
-		marks[i] = padCell(".")
-	}
-
-	for _, ptr := range pointers {
-		idx := int(ptr.seq - base)
-		if idx < 0 || idx >= upTo {
-			continue
-		}
-
-		curr := trimCell(marks[idx])
-		if curr == "." {
-			curr = ptr.mark
-		} else {
-			curr += ptr.mark
-		}
-		marks[idx] = padCell(curr)
-	}
-
-	printRow("", vals)
-	printRow("  ", marks)
-}
-
-func printRow(prefix string, row []string) {
-	fmt.Print(prefix)
-	fmt.Print("[")
-	for i, s := range row {
-		fmt.Print(s)
-		if i != len(row)-1 {
-			fmt.Print(" ")
-		}
-	}
-	fmt.Println("]")
-}
-
-func padCell(s string) string {
-	if len(s) >= 3 {
-		return s
-	}
-	for len(s) < 3 {
-		s += " "
-	}
-	return s
-}
-
-func trimCell(s string) string {
-	return strings.TrimSpace(s)
 }

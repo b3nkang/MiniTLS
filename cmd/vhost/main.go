@@ -28,9 +28,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("Forwarding Table")
-	ipStack.PrintForwardingTable()
-	fmt.Println("Interfaces")
 	ipStack.PrintInterfacesForDebugging()
 
 	/* register test protocol receive handler */

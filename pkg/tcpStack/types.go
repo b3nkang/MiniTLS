@@ -17,27 +17,36 @@ const (
     SYN_SENT
     SYN_RECEIVED
     ESTABLISHED
+	FIN_WAIT_1
+	CLOSE_WAIT
+	LAST_ACK
+	FIN_WAIT_2
+	TIME_WAIT
 	ERROR /* just made this for 3-way handshake */
 )
 
 const (
-	MAX_WIN_SIZE = 15
-	MAX_SEG_SIZE = 1000  /* 1360 MAX, but we can choose whatever we want */
+	MAX_WIN_SIZE = 65535
+	MAX_SEG_SIZE = 1360  /* 1360 MAX, but we can choose whatever we want */
+	MAX_SEGMENT_LATENCY = 3 /* should be 2 minutes, but reducing for testing */
 )
 
 // for RTO and SRTT calculations
 // initial values taken from slides
 const (
-	RTO_MIN = 1 * time.Second		// in milliseconds
-	RTO_MAX = 5 * time.Second		// in milliseconds
-	RTO_INIT = 1 * time.Second		// in milliseconds, 
-									// RFC 6298 (2.1): 
-									// 		Until a round-trip time (RTT) measurement has been made for a
-									//		segment sent between the sender and receiver, the sender SHOULD
-									//		set RTO <- 1 second, though the "backing off" on repeated
-									// 		retransmission discussed in (5.5) still applies
+	RTO_MIN = 1 * time.Second
+	RTO_MAX = 5 * time.Second
+	RTO_INIT = 1 * time.Second
+				// RFC 6298 (2.1): 
+				// 		Until a round-trip time (RTT) measurement has been made for a
+				//		segment sent between the sender and receiver, the sender SHOULD
+				//		set RTO <- 1 second, though the "backing off" on repeated
+				// 		retransmission discussed in (5.5) still applies
 	RTO_ALPHA = 0.85
 	RTO_BETA = 1.65
+	PROBE_ITV = 40 * time.Millisecond		// randomly chosen interval at which to send probes
+											// for manual testing, use 4 * time.Second
+											// for sf command testing, use 40 * time.Millisecond
 )
 
 /* info about 1 socket in table */
@@ -66,6 +75,9 @@ type SocketTableEntry struct {
 
 	/* for sending packets without exposing whole tcpStack */
 	sendPacketFunc	func(request *SendRequest) /* use to send packets from tcpStack */
+
+	/* removing itself from the scoketTable */
+	removeSelf		func(int)
 }
 
 /* 1 per host: stores all info about open sockets 
@@ -99,6 +111,9 @@ type VTCPListener struct {
 	port 			uint16
 	connChan 		chan *VTCPConn
 	acceptingConns 	bool /* true if Accept() has been called--idk if there's a better way to do this */
+
+	/* pointer to socket table entry for state */
+	socketEntry 	*SocketTableEntry
 }
 
 /* actual "normal socket" object */
@@ -107,6 +122,10 @@ type VTCPConn struct {
 	sendBuf 		*SendBuf
 	recvBuf			*RecvBuf
 	retransQueue	*RetransmissionQueue
+	socketID		int
+
+	/* not sure if this is kosher, but we gotta know our state */
+	socketEntry 	*SocketTableEntry
 }
 
 type SendBuf struct {
@@ -128,6 +147,10 @@ type SendBuf struct {
 	/* channels */
 	dataWrittenToBuf chan struct{} 	/* tells thread that VWrite wrote data to buffer, tragically cannot pass straight bytes because VWrite needs to know num bytes written */
 	spaceAvailable chan struct{} 	/* tells VWrite that space has been freed in sendBuf if it's full */
+
+	isProbing bool					// indicates if we are in ZWP
+	otherSideWindowUpdated chan struct{} 	// channel to unblock sendLoop's ZWP condition that the window has been updated since we sent a probe and to try again
+	zwpTrigger chan struct {} 		// channel to trigger ZWP start in handlePureAck. for complicated reasons this must be distinct from otherSideWindowUpdated channel
 }
 
 type RecvBuf struct {
@@ -147,6 +170,8 @@ type RecvBuf struct {
 
 	/* channels */
 	dataToRead chan struct {}
+
+	fin uint32 		/* if FIN has been sent, this will be FIN SEQ, else 0 */
 }
 
 /* circular buffer used in send/recv buf */
@@ -174,6 +199,7 @@ type EarlyArrivals []*EarlyArrival
 type RetransmissionEntry struct {
 	seqNum uint32
 	len uint32				// length of data segment sent (so we know what slice between nxt-una to send)
+	flags uint8				// flags included in segment (assume ACK unless specified)
 	sent time.Time
 	retransmitted bool		// a flag for if the entry has been retransmitted. if so, we don't use to update RTT (Karn's)
 							// RFC 6298: 

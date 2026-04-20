@@ -16,6 +16,12 @@ doc-ex:
 l-r1h2:
 	util/vnet_run linear-r1h2
 
+l-r1h2a:
+	util/vnet_run linear-r1h2a
+
+l-r1h2c:
+	util/vnet_run linear-r1h2c
+
 l-r1h4:
 	util/vnet_run linear-r1h4
 

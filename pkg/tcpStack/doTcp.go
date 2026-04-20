@@ -20,23 +20,12 @@ if FIN arrives early:
 For timeout case:
 - print something, delete socket/connection and table entry, that's it
 
-Had to do something a little gross for closing because VRead and VWrite need to know about state.
-This should also help us a LOT going forward if it's kosher.
-I added a pointer to socketTableEntry in Conn
-So now SocketTableENtry stores Conn, but Conn also has a pointer for SocketTableEntry...idk
-
-NOTES:
-	MSS is 1360 i think? maybe we should verify this...Verified: we can set MSS to whatever we want!
-
 TODO: TIMEOUT CONNECTION AFTER X RETRANSMISSIONS (rfc MUST-20): Can just pick a maximum number of retransmissions, abort if this threshold is exceeded.
 Value does not need to be associated with a specific time interval (though you may want to set a minimum time interval, eg. 5s, before the connection aborts)
 
 TODO: RFC MUST-66: Receiving an RST MUST always immediately terminate the connection.  Can always ignore URG flag.
 
 TODO: read through socket API description in handout and make sure we're returning errors properly
-
-// TODO: small, refactor tcpHeader = SEGheader or something to make things much less confusing
-// TODO: low prio/long term, look into if seqNum field is even necessary in table entry. may not be
 
 */
 
@@ -453,9 +442,7 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 
 	if seg.AckNum > sendBuf.nxt { // RFC: If the ACK acks something not yet sent (SEG.ACK > SND.NXT), then send an ACK, drop the segment, and return
 		if sendBuf.isProbing && seg.AckNum == sendBuf.nxt+1 {
-			// probe byte is real data
-			ackedBytes := seg.AckNum - sendBuf.una // should be 1 in your design
-
+			ackedBytes := seg.AckNum - sendBuf.una // should be 1
 			sendBuf.otherSideWindow = seg.WindowSize
 			sendBuf.una = seg.AckNum
 			sendBuf.nxt = seg.AckNum
@@ -829,6 +816,3 @@ func (retransQueue *RetransmissionQueue) updateRto(rtt time.Duration) error {
     retransQueue.rto = max(RTO_MIN, min(newRto, RTO_MAX))
 	return nil
 }
-
-
-

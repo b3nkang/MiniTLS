@@ -43,6 +43,7 @@ func (tcp *TCPStack) VListen(port uint16) (*VTCPListener, error) {
 		state: 	 	LISTEN,
 		socketID:   tcp.socketTable.nextID,
 		listenSocket: listener,
+		removeSelf: tcp.socketTable.Remove,
 	}
 
 	listener.socketEntry = tableEntry
@@ -281,10 +282,11 @@ func (conn *VTCPConn) VClose() error {
 		fmt.Println("[VCLOSE] waiting for sendbuf to empty before sending FIN")
 		for {
 			conn.sendBuf.mu.Lock()
-			empty := conn.sendBuf.nxt <= conn.sendBuf.una
+			noneInFlight := conn.sendBuf.nxt <= conn.sendBuf.una
+			noneUnsent := conn.sendBuf.lbw < conn.sendBuf.nxt
 			conn.sendBuf.mu.Unlock()
 			
-			if empty {
+			if noneInFlight && noneUnsent {
 				break
 			}
 			/* wait a tiny bit before checking again */

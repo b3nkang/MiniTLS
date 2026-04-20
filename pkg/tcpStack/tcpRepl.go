@@ -103,7 +103,7 @@ func (tcp *TCPStack) HandleREPLCommands() {
 		/* send file sf path/to/some_file 10.1.0.2 9999 */
 		case "sf":
 			if len(parts) != 4 {
-				fmt.Println("Usage: rf <srcFilePath> <Receiver IP> <Receiver PortNum>")
+				fmt.Println("Usage: sf <srcFilePath> <Receiver IP> <Receiver PortNum>")
 				continue
 			}
 			portInt, err := strconv.Atoi(parts[3])
@@ -115,9 +115,9 @@ func (tcp *TCPStack) HandleREPLCommands() {
 				fmt.Println("Port must be a number 0-65535")
 				continue
 			}
-			addr, err := netip.ParseAddr(parts[1])
+			addr, err := netip.ParseAddr(parts[2])
 			if err != nil {
-				fmt.Println("Invalid IP Format: ", parts[1])
+				fmt.Println("Invalid IP Format: ", parts[2])
 				continue
 			}
 			go tcp.sfCommand(parts[1], addr, portInt)
@@ -250,10 +250,13 @@ func (tcp *TCPStack) rfCommand(destFile string, portNum int) {
 
 	/* close file eventually */
 	defer file.Close()
+	defer listener.VClose()
 
 	/* read one page at a time */
 	buf := make([]byte, 4096)
 	
+	totalBytesRead := 0
+
 	/* read file data sent to conn 
 		if VRead blocks until data is ready, how will 
 		we ever know if it's done?
@@ -279,9 +282,17 @@ func (tcp *TCPStack) rfCommand(destFile string, portNum int) {
 				fmt.Println("File write error: ", writeErr)
 				return
 			}
+			totalBytesRead += numBytesRead
 		}
 	}
 
+	fmt.Printf("Received %d total bytes\n", totalBytesRead)
+
+	err = conn.VClose()
+	if err != nil {
+		fmt.Println("[rfCommand] vclosed called, close error: ", err)
+		return
+	}
 }
 
 /* write file */
@@ -302,6 +313,8 @@ func (tcp *TCPStack) sfCommand(srcFile string, addr netip.Addr, portNum int) {
     }
 	defer file.Close()
 
+	totalBytesWritten := 0
+
 	/* need a buffer to read from file -> put that buf in VWrite */
 	buf := make([]byte, 4096) /* page size */
 	for {
@@ -312,7 +325,7 @@ func (tcp *TCPStack) sfCommand(srcFile string, addr netip.Addr, portNum int) {
 			return
 		}
 		if bytesRead > 0 {
-			bytesWritten, writeErr := conn.VWrite(buf)
+			bytesWritten, writeErr := conn.VWrite(buf[:bytesRead])
 			if writeErr != nil {
 				fmt.Println("VWrite error:", writeErr)
                 return
@@ -321,6 +334,7 @@ func (tcp *TCPStack) sfCommand(srcFile string, addr netip.Addr, portNum int) {
 				fmt.Printf("Error with VWrite: wrote only %d bytes instead of the full %d bytes read\n", bytesWritten, bytesRead)
 				return
 			}
+			totalBytesWritten += bytesWritten
 		}
 		/* written whole file -> check AFTER read because apparently in Go
 			Read() can return error EOF and bytes read */
@@ -328,9 +342,13 @@ func (tcp *TCPStack) sfCommand(srcFile string, addr netip.Addr, portNum int) {
 			break
 		}
 	}
-
+	fmt.Printf("Sent %d total bytes\n", totalBytesWritten)
 	fmt.Println("[SENDFILE] Finishing writing, closing connection ")
-	conn.VClose()
+	err = conn.VClose()
+	if err != nil {
+		fmt.Println("[sfCommand] vclosed called, close error: ", err)
+		return
+	}
 }
 
 /* close socket with given ID */

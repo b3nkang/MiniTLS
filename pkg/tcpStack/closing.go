@@ -116,20 +116,26 @@ func (entry *SocketTableEntry ) handleEarlyFin() {
 		entry.sendPureAck(recvBuf.nxt)
 
 		/* PASSIVE SIDE */
-		if entry.state == ESTABLISHED {
+		switch entry.state {
+		case ESTABLISHED:
 			fmt.Println("Handled FIN when it arrived early and we are in ESTABLISHED. Entering CLOSE_WAIT")
 			entry.state = CLOSE_WAIT /* wait for app to call close */
+
+			select { // signal to blocked VRead so it can get to CLOSE_WAIT and ret io.EOF
+			case entry.normalSocket.recvBuf.dataToRead <- struct{}{}:
+			default:
+			}
+
 		/* ACTIVE SIDE */
-		} else if entry.state == FIN_WAIT_2 {
+		case FIN_WAIT_2:
 			fmt.Println("Handled FIN when it arrived early and we are in FIN_WAIT_2. Entering TIME_WAIT")
 			entry.state = TIME_WAIT
 			entry.timeWait()
-		} else {
+		default:
 			fmt.Println("error: invalid state in handleEarlyFin")
 		}
 	}
 }
-
 
 func (entry *SocketTableEntry) handleFin(tcpHdr header.TCPFields) {
 	fmt.Println("entered handleFin function")
@@ -160,15 +166,22 @@ func (entry *SocketTableEntry) handleFin(tcpHdr header.TCPFields) {
 	entry.sendPureAck(recvBuf.nxt)
 
 	/* PASSIVE SIDE */
-	if entry.state == ESTABLISHED {
+	switch entry.state {
+	case ESTABLISHED:
 		fmt.Println("Handled FIN when it arrived on time and we are in ESTABLISHED. Entering CLOSE_WAIT")
 		entry.state = CLOSE_WAIT /* wait for app to call close */
+
+		select { // signal to blocked VRead so it can get to CLOSE_WAIT and ret io.EOF
+		case entry.normalSocket.recvBuf.dataToRead <- struct{}{}:
+		default:
+		}
+
 	/* ACTIVE SIDE */
-	} else if entry.state == FIN_WAIT_2 {
+	case FIN_WAIT_2:
 		fmt.Println("Handled FIN when it arrived on time and we are in FIN_WAIT_2. Entering TIME_WAIT")
 		entry.state = TIME_WAIT
 		entry.timeWait() /* go and wait and then close conn */
-	} else {
+	default:
 		fmt.Println("error: invalid state in handleEarlyFin")
 	}
 

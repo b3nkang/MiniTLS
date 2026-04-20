@@ -163,10 +163,14 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 		if numBytesToWrite > int(spaceInBuf) {
 			numBytesToWrite = int(spaceInBuf)
 		}
+
+		startOffset := totalBytesWritten
+		endOffset := totalBytesWritten + numBytesToWrite
+
 		fmt.Printf("[TCP - VWrite] send buf size before write: %d\n", sendBuf.cBuf.currSize)
-			
-		sendBuf.cBuf.WriteIntoBuf(sendBuf.lbw+1, data[:numBytesToWrite])
-		start:= sendBuf.lbw+1
+
+		sendBuf.cBuf.WriteIntoBuf(sendBuf.lbw+1,data[startOffset:endOffset])
+		start := sendBuf.lbw+1
 		sendBuf.lbw += uint32(numBytesToWrite)
 		totalBytesWritten += numBytesToWrite
 

@@ -288,9 +288,10 @@ func (entry *SocketTableEntry) handlePayload(tcpHeader header.TCPFields, payload
 
 	/* old/redundant segment -- seqNum of segment less than NXT - TODO technically we are supposed to discard payload and send an ack back*/
 	if tcpHeader.SeqNum < recvBuf.nxt {
-		fmt.Println("[TCP HANDLE PAYLOAD] Got redundant segment, dropping packet")
+		ackNum := recvBuf.nxt
+		fmt.Println("[TCP HANDLE PAYLOAD] Got redundant segment, sending back old ack")
 		recvBuf.mu.Unlock()
-		return nil
+		entry.sendPureAck(ackNum)
 	}
 
 	/* else, must be the segment number we're looking for */
@@ -463,9 +464,22 @@ func (socketEntry *SocketTableEntry) handlePureAck(seg header.TCPFields) error {
 
 	if seg.AckNum > sendBuf.nxt { // RFC: If the ACK acks something not yet sent (SEG.ACK > SND.NXT), then send an ACK, drop the segment, and return
 		if sendBuf.isProbing && seg.AckNum == sendBuf.nxt+1 {
-			// valid probe ACK - receiver consumed our probe byte
-			// update window but don't advance UNA/NXT or touch retrans queue
+			// probe byte is real data
+			ackedBytes := seg.AckNum - sendBuf.una // should be 1 in your design
+
 			sendBuf.otherSideWindow = seg.WindowSize
+			sendBuf.una = seg.AckNum
+			sendBuf.nxt = seg.AckNum
+			socketEntry.seqNum = sendBuf.nxt
+			sendBuf.cBuf.AdvanceBase(ackedBytes)
+
+			// unblock vwrite on a full send buffer
+			select {
+			case sendBuf.spaceAvailable <- struct{}{}:
+			default:
+			}
+
+			// signal sendLoop to keep probing or do normal sends
 			select {
 			case sendBuf.otherSideWindowUpdated <- struct{}{}:
 			default:

@@ -156,6 +156,17 @@ func (tcp *TCPStack) HandleREPLCommands() {
 				continue
 			}			
 			tcp.prqCommand(sID)
+		case "rst":
+			if len(parts) != 2 {
+				fmt.Println("Usage: rst <socketID>")
+				continue
+			}
+			sID, err := strconv.Atoi(parts[1])
+			if err != nil {
+				fmt.Println("Socket ID must be an integer")
+				continue
+			}			
+			tcp.rstCommand(sID)
 		default:
 			fmt.Println("Unknown TCP command")
 		}
@@ -404,6 +415,17 @@ func (tcp *TCPStack) prqCommand(socketNum int) {
 	fmt.Println(seqs)
 }
 
+/* send a reset */
+func (tcp *TCPStack) rstCommand(sID int) {
+	entry := tcp.socketTable.socketMap[sID]
+	/* tell other side to terminate */
+	entry.sendRST()
+	/* terminate ourselves */
+	entry.state = CLOSED
+	entry.teardown()
+}
+
+
 
 /* list socket table */
 func (table *SocketTable) listSockets() {
@@ -538,4 +560,5 @@ func (tcp *TCPStack) getNormalSocket(socketNum int) (*VTCPConn) {
 
 	return socket.normalSocket
 }
+
 

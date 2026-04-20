@@ -214,7 +214,7 @@ func (entry *SocketTableEntry) teardown() {
 	close(entry.normalSocket.sendBuf.spaceAvailable)
 	entry.normalSocket.sendBuf.mu.Unlock()
 	fmt.Println("Did not deadlock on the sendBuf")
-	
+
 	entry.normalSocket.recvBuf.mu.Lock()
 	close(entry.normalSocket.recvBuf.dataToRead)
 	entry.normalSocket.recvBuf.mu.Unlock()
@@ -236,4 +236,5 @@ func (table *SocketTable) Remove(socketID int) {
     delete(table.socketMap, socketID)
 	table.mu.Unlock()
 }
+
 

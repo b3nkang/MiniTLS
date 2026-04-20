@@ -87,7 +87,7 @@ func (stack *IPStack) HandleCommand(line string) {
 	case "q":
 		os.Exit(0)
 	/* pass TCP commands to the TCP REPL Handler */
-	case "a", "c", "ls", "s", "r", "sf", "rf", "cl", "d", "prq", "pr", "ps":
+	case "a", "c", "ls", "s", "r", "sf", "rf", "cl", "d", "prq", "rst":
 		stack.TCPReplChan <- line	
 	default:
 		fmt.Println("Unknown command")

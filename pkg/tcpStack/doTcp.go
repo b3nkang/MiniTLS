@@ -29,17 +29,14 @@ TODO: 	right now SF/RF are printing the entire file contents (for debugging purp
 
 
 RUNNING BUGS/PROBLEMS LIST:
-- (really high priority) deadlock on send buffer in teardown for PASSIVE 		----------------> had a stab at this with some fixes, across my manual testing it's not happening but could still be issue
 - (high priority) if we send a SYN to the wrong IP/port (i.e they don't exist)
-	we create an entry in the table that never moves past SYN-SENT state and is never removed --> not fixed
+	we create
+	 an entry in the table that never moves past SYN-SENT state and is never removed --> not fixed
 - (low priority) busy-wait for send buf to be empty in VClose ----------------------------------> there was a bug IN the busy waiting that i fixed but it's still busy waiting
 
 
 For state stuff:
 - don't worry about stuff that couldn't happen in this project
-
-if FIN arrives early:
-- save state for "seen FIN" and check at the end of early arrivals queue check
 
 For timeout case:
 - print something, delete socket/connection and table entry, that's it
@@ -47,7 +44,7 @@ For timeout case:
 TODO: TIMEOUT CONNECTION AFTER X RETRANSMISSIONS (rfc MUST-20): Can just pick a maximum number of retransmissions, abort if this threshold is exceeded.
 Value does not need to be associated with a specific time interval (though you may want to set a minimum time interval, eg. 5s, before the connection aborts) -----> TBD but should be simple fix
 
-TODO: RFC MUST-66: Receiving an RST MUST always immediately terminate the connection.  Can always ignore URG flag.	-----------------------------------------------> also TBD
+TODO: RFC MUST-66: Receiving an RST MUST always immediately terminate the connection.  Can always ignore URG flag.	-----------------------------------------------> done
 
 TODO: read through socket API description in handout and make sure we're returning errors properly
 
@@ -85,8 +82,15 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 		fmt.Printf("Src Port: %s\nSrc IP: %s\n Dest Port: %s\n Dest IP: %s\n", string(tcpHdr.SrcPort), hdr.Src.String(), string(tcpHdr.DstPort), hdr.Dst.String())
 		return
 	} 
+
+	/* IN ALL CASES: 1st--check if RST was sent and immediately terminate */
+	if tcpHdr.Flags & header.TCPFlagRst != 0 {
+		fmt.Println("Terminating connection.")
+		socketEntry.state = CLOSED
+		socketEntry.teardown()
+		return
+	}
 	
-	// PrintSocketTableEntry(socketEntry)
 
 	/* 3. act differently based on state of that conn in our table */
 	switch socketEntry.state {
@@ -731,6 +735,7 @@ func (entry *SocketTableEntry) sendLoop() {
 				flags: header.TCPFlagAck,
 				sent: time.Now(),
 				retransmitted: false,
+				numRetransmits: 0,
 			}
 			retransQueue := entry.normalSocket.retransQueue
 			retransQueue.mu.Lock()
@@ -794,6 +799,13 @@ func (entry *SocketTableEntry) retransmitSegment() error {
 
 	// update to true per RFC 6298 sec 3 (on Karns) to avoid updating RTO on ack of this segment
 	segmentToResend.retransmitted = true
+	segmentToResend.numRetransmits += 1
+
+	if segmentToResend.numRetransmits > MAX_RETRANSMISSIONS {
+		entry.state = CLOSED
+		entry.teardown()
+		return nil
+	}
 
 	// actually send
 	cBuf := entry.normalSocket.sendBuf.cBuf
@@ -839,4 +851,32 @@ func (retransQueue *RetransmissionQueue) updateRto(rtt time.Duration) error {
     newRto := time.Duration(RTO_BETA * float64(srtt))
     retransQueue.rto = max(RTO_MIN, min(newRto, RTO_MAX))
 	return nil
+}
+
+/* helper to test RST processing-> send RST 
+ SeqNum should be 0 if coming from a listener and normal otherwise 
+ if implementing for real functionality, add seqNum param 
+ <SEQ=0><ACK=SEG.SEQ+SEG.LEN><CTL=RST,ACK> */
+func (entry *SocketTableEntry) sendRST(){
+	fmt.Println("Sending RST")
+	tcpHdr := &header.TCPFields{
+		SrcPort:       entry.localPort,
+		DstPort:       entry.destPort,
+		SeqNum:        entry.seqNum, /* = sendBuf.nxt */
+		DataOffset:    20, 			
+		Flags:         header.TCPFlagRst | header.TCPFlagAck,
+		WindowSize:    entry.normalSocket.recvBuf.getAvailableWindow(),
+		Checksum:      0,
+		UrgentPointer: 0,
+	}	
+	
+		/* send using sendTCP */
+	sendReq := &SendRequest{
+		tcpHeader: tcpHdr,
+		data: make([]byte, 0),
+		sourceIP: entry.localIP,
+		destIP: entry.destIP,
+	}
+	entry.sendPacketFunc(sendReq)
+
 }

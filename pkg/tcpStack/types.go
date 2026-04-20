@@ -26,25 +26,27 @@ const (
 )
 
 const (
-	MAX_WIN_SIZE = 10
-	MAX_SEG_SIZE = 1  /* 1360 MAX, but we can choose whatever we want */
+	MAX_WIN_SIZE = 65535
+	MAX_SEG_SIZE = 1360  /* 1360 MAX, but we can choose whatever we want */
 	MAX_SEGMENT_LATENCY = 3 /* should be 2 minutes, but reducing for testing */
 )
 
 // for RTO and SRTT calculations
 // initial values taken from slides
 const (
-	RTO_MIN = 1 * time.Second		// in milliseconds
-	RTO_MAX = 5 * time.Second		// in milliseconds
-	RTO_INIT = 1 * time.Second		// in milliseconds, 
-									// RFC 6298 (2.1): 
-									// 		Until a round-trip time (RTT) measurement has been made for a
-									//		segment sent between the sender and receiver, the sender SHOULD
-									//		set RTO <- 1 second, though the "backing off" on repeated
-									// 		retransmission discussed in (5.5) still applies
+	RTO_MIN = 1 * time.Second
+	RTO_MAX = 5 * time.Second
+	RTO_INIT = 1 * time.Second
+				// RFC 6298 (2.1): 
+				// 		Until a round-trip time (RTT) measurement has been made for a
+				//		segment sent between the sender and receiver, the sender SHOULD
+				//		set RTO <- 1 second, though the "backing off" on repeated
+				// 		retransmission discussed in (5.5) still applies
 	RTO_ALPHA = 0.85
 	RTO_BETA = 1.65
-	PROBE_ITV = 4 * time.Second		// randomly chosen interval at which to send probes
+	PROBE_ITV = 40 * time.Millisecond		// randomly chosen interval at which to send probes
+											// for manual testing, use 4 * time.Second
+											// for sf command testing, use 40 * time.Millisecond
 )
 
 /* info about 1 socket in table */

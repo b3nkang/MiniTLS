@@ -83,8 +83,16 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
 			break
 		}
 	}
-	/* get this conn's local IP (just going to use if0?) */
-	localInterface := tcp.ipStack.Interfaces["if0"]
+
+	/* get this conn's local IP via LPM and iface table */
+	ipEntry, _, found := tcp.ipStack.LongestPrefixMatch(addr)
+	if !found {
+		return nil, errors.New("[VConnect] no route to destination")
+	}
+	localInterface := tcp.ipStack.Interfaces[ipEntry.InterfaceName]
+	if localInterface == nil {
+		return nil, errors.New("[VConnect] outgoing interface not found")
+	}
 	localIP := localInterface.IP
 
 	/* make new socket table entry */

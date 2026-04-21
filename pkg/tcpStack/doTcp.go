@@ -21,7 +21,8 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 	tcpHdr, tcpPayload, err := utils.ParseAndValidateTCP(hdr, payload)
 	if err != nil {
 		/* checksum failed */
-		fmt.Printf("Error: %s\n", err.Error())
+		utils.VPrintf("Checksum failed, error: %s\n", err.Error())
+		return
 	}
 
 	/* 2. match tuple to our table; tableMatch(srcPort, srcIP, destPort, destIP) */

@@ -35,7 +35,20 @@ func HandleTestMessage(hdr *ipv4header.IPv4Header, payload []byte) {
 	fmt.Printf("[HandleTestMessage] Received message from %s: %s\n", hdr.Src, message)
 }
 
+// control printfs and printlns
+var VERBOSE = false
 
+func VPrintf(format string, args ...interface{}) {
+	if !VERBOSE {
+		return
+	}
+	fmt.Printf(format, args...)
+}
 
-
+func VPrintln(args ...interface{}) {
+	if !VERBOSE {
+		return
+	}
+	fmt.Println(args...)
+}
 

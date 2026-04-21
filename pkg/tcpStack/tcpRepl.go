@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	utils "ip-isabelle-and-ben/pkg/protocol"
+
 	"github.com/olekukonko/tablewriter"
 )
 
@@ -156,6 +158,23 @@ func (tcp *TCPStack) HandleREPLCommands() {
 				continue
 			}			
 			tcp.prqCommand(sID)
+		case "rst":
+			if len(parts) != 2 {
+				fmt.Println("Usage: rst <socketID>")
+				continue
+			}
+			sID, err := strconv.Atoi(parts[1])
+			if err != nil {
+				fmt.Println("Socket ID must be an integer")
+				continue
+			}			
+			tcp.rstCommand(sID)
+		case "v":
+			if len(parts) != 1 {
+				fmt.Println("Usage: v")
+				continue
+			}
+			vCommand()
 		default:
 			fmt.Println("Unknown TCP command")
 		}
@@ -198,7 +217,7 @@ func (tcp *TCPStack) sCommand(socketNum int, data []byte) {
 	bytesWritten, err := socket.VWrite(data)
 
 	if err == nil {
-		fmt.Printf("%d bytes written to socket %d\n", bytesWritten, socketNum)
+		utils.VPrintf("%d bytes written to socket %d\n", bytesWritten, socketNum)
 		return
 	} else {
 		fmt.Printf("VWrite error: %s", err)
@@ -404,6 +423,26 @@ func (tcp *TCPStack) prqCommand(socketNum int) {
 	fmt.Println(seqs)
 }
 
+/* send a reset */
+func (tcp *TCPStack) rstCommand(sID int) {
+	entry := tcp.socketTable.socketMap[sID]
+	/* tell other side to terminate */
+	entry.sendRST()
+	/* terminate ourselves */
+	entry.state = CLOSED
+	entry.teardown()
+}
+
+func vCommand() {
+	// fmt.Printf("vCommand toggling VERBOSE from %t to ",utils.VERBOSE)
+	if utils.VERBOSE == true {
+		utils.VERBOSE = false
+
+	} else {
+		utils.VERBOSE = true
+	}
+	// fmt.Printf("%t\n",utils.VERBOSE)
+}
 
 /* list socket table */
 func (table *SocketTable) listSockets() {
@@ -538,4 +577,5 @@ func (tcp *TCPStack) getNormalSocket(socketNum int) (*VTCPConn) {
 
 	return socket.normalSocket
 }
+
 

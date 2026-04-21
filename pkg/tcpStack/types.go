@@ -28,13 +28,14 @@ const (
 const (
 	MAX_WIN_SIZE = 65535
 	MAX_SEG_SIZE = 1360  /* 1360 MAX, but we can choose whatever we want */
-	MAX_SEGMENT_LATENCY = 3 /* should be 2 minutes, but reducing for testing */
+	MAX_SEGMENT_LATENCY = 3 /* TODO: should be 2 minutes, but reducing for testing */
+	MAX_RETRANSMISSIONS = 4 /* TODO: change to 10 */
 )
 
 // for RTO and SRTT calculations
 // initial values taken from slides
 const (
-	RTO_MIN = 1 * time.Second
+	RTO_MIN = 250 * time.Millisecond
 	RTO_MAX = 5 * time.Second
 	RTO_INIT = 1 * time.Second
 				// RFC 6298 (2.1): 
@@ -207,6 +208,7 @@ type RetransmissionEntry struct {
 							// 		is, RTT samples MUST NOT be made using segments that were
 							//		retransmitted (and thus for which it is ambiguous whether the reply
 							// 		was for the first instance of the packet or a later instance).
+	numRetransmits int
 }
 
 type RetransmissionQueue struct {

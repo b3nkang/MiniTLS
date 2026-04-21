@@ -45,14 +45,14 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 
 	/* check if Accept() has been called on listener */
 	if !listener.acceptingConns {
-		fmt.Println("[TCP] tried to connect to a listen socket that is not accepting conns--dropping packet")
+		utils.VPrintln("[TCP] tried to connect to a listen socket that is not accepting conns--dropping packet")
 		return
 	}
 
 	/* ensure packet is actually SYN */
 	if (tcpHeader.Flags & header.TCPFlagSyn) == 0 {
 		/* if SYN flag is not set, drop packet */
-		fmt.Println("[TCP] TCP packet sent to listener that does not have SYN flag set--dropping packet")
+		utils.VPrintln("[TCP] TCP packet sent to listener that does not have SYN flag set--dropping packet")
 		return
 	}
 

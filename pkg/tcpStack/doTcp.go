@@ -41,10 +41,8 @@ For state stuff:
 For timeout case:
 - print something, delete socket/connection and table entry, that's it
 
-TODO: TIMEOUT CONNECTION AFTER X RETRANSMISSIONS (rfc MUST-20): Can just pick a maximum number of retransmissions, abort if this threshold is exceeded.
-Value does not need to be associated with a specific time interval (though you may want to set a minimum time interval, eg. 5s, before the connection aborts) -----> TBD but should be simple fix
 
-TODO: RFC MUST-66: Receiving an RST MUST always immediately terminate the connection.  Can always ignore URG flag.	-----------------------------------------------> done
+TODO: RFC MUST-66: Receiving an RST MUST always immediately terminate the connection.  Can always ignore URG flag.	---------------------------------> done
 
 TODO: read through socket API description in handout and make sure we're returning errors properly
 
@@ -680,7 +678,6 @@ func (entry *SocketTableEntry) sendLoop() {
 					entry.sendSegment(probeByte, probeSeq, header.TCPFlagAck)
 
 					// start timer for next ZWP
-					// small TODO: add exponential backoff (not strictly required in spec)
 					if probeTimer == nil {
 						probeTimer = time.NewTimer(PROBE_ITV)
 					} else {
@@ -827,7 +824,6 @@ func (entry *SocketTableEntry) retransmitSegment() error {
 	// start the timer again, recursive call
 	retransQueue.timer = entry.startRtoTimer()
 	//	TODO: pretty sure this is expected behavior for it to spin forever waiting for an ack for a retransmission at RTO_MAX in worst case
-	// TODO: implement abandon after X retransmissions
 	return nil
 }
 

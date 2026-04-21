@@ -1,59 +1,5 @@
 package tcpstack
 
-/*
-
-Outstanding TODO:s -
-	- send a big file: send a file between hosts with a loss rate of at most 2% (which is the highest value we will use when testing). For a large enough file (100KB-1MB) you should see plenty of examples of retransmissions that you can check by comparing what you see in Wireshark with any log output, timestamps, etc.
-	- read spec and ensure conformity
-	- capture save in wireshark
-	- go through rfc and check
-
-Updates as of 4/20 early morning -
-	- 	ZWP: zwp is working per my manual testing across a variety of scenarios, but still can't say for certain
-		but it's very close if not fully functional
-	- 	SF/RF: i have been testing sf and rf and they are working for images:
-		- 	there's a testBig and testSmall which are images i have sf'd, for testBig i sent it with a max MSS
-			and WIN and also with MSS=1 and WIN=10 and it was good (it took 3 hours to send)
-			-	testBigRes-1.jpg: sent with MSS=1, WIN=10
-			-	testBigRes-2.jpg: sent with MSS=1360, WIN=65535
-			- 	NOTE: currently sending is configured to MSS=1360, WIN=65535
-			-	*NOTE*: i have not checked results with hashing, only inspecting the image. consider hash check
-		- 	i've created some additional nets that are clones of linear-r1h2 (linear-r1h2a, linear r1h2c) for
-			which you may need to generate the LNX files, but they exist and are useful if you want to do
-			several large sf's concurrently
-	-	CLOSING: i've only fixed enough bugs insofar as to get closing to work after sf/rf, it seems to be now
-		- 	some of the bugs you noted below have been fixed as a result, some are still outstanding (refer to
-			updates below)
-		-	sfCommand and rfCommand have been updated to work with vclose and do so cleanly
-			- 	for awhile i was running into deadlocks or other segfaults at the end with the closing on
-				occasion; i haven't run into an issue in awhile now but not sure this is fully resolved, likely no
-
-TODO: 	right now SF/RF are printing the entire file contents (for debugging purposes). Obviously this doesn't
-		conform to spec; don't bother removing any prints right now. next thing i'll deal with is writing some
-		command-wide flag or var called "verbose" or something and if it's flipped we'll have the prints, otherwise
-		it hides all the prints. i will do sometime monday
-
-
-RUNNING BUGS/PROBLEMS LIST:
-- (high priority) if we send a SYN to the wrong IP/port (i.e they don't exist)
-	we create
-	 an entry in the table that never moves past SYN-SENT state and is never removed --> not fixed
-- (low priority) busy-wait for send buf to be empty in VClose ----------------------------------> there was a bug IN the busy waiting that i fixed but it's still busy waiting
-
-
-For state stuff:
-- don't worry about stuff that couldn't happen in this project
-
-For timeout case:
-- print something, delete socket/connection and table entry, that's it
-
-
-TODO: RFC MUST-66: Receiving an RST MUST always immediately terminate the connection.  Can always ignore URG flag.	---------------------------------> done
-
-TODO: read through socket API description in handout and make sure we're returning errors properly
-
-*/
-
 import (
 	"errors"
 	"fmt"

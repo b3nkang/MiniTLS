@@ -66,8 +66,7 @@ func (listener *VTCPListener) VAccept() (*VTCPConn, error) {
 	return conn, nil
 }
 
-/* create a new conn and perform handshake. block until connection established
-TODO: if we put in the right IP address but wrong port, we segfault */
+/* create a new conn and perform handshake. block until connection established */
 func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
 	table := tcp.socketTable
 
@@ -125,7 +124,6 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
 		case ESTABLISHED:
 			fmt.Printf("Created new socket with ID %d\n", conn.socketID)
             return conn, nil
-		/* TODO: actually send this situation if there is an error in the 3-way handshake */
         case ERROR:
 			return nil, errors.New("Error ocurred before 3-way handshake concluded")
 		}
@@ -189,8 +187,7 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 	return totalBytesWritten, nil
 }
 
-// TODO: returning numBytesRead for now but check if right -- that is right
-/* TODO : "VRead MUST return number of bytes read into the buffer. 
+/* "VRead MUST return number of bytes read into the buffer. 
 The returned error is nil on success, io.EOF if other side of 
 connection has finished, or another error describing other failure cases.
 */

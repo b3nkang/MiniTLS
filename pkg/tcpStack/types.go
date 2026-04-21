@@ -140,9 +140,8 @@ type SendBuf struct {
 	/* pointers */
 	nxt uint32 				/* nxt byte to send */
 	lbw uint32 				/* last byte written to buf (from app) */	
+	una uint32			/* earliest-sent, but still un-ACKed byte */
 	
-	// // NOTE: so I tried to make it work without UNA field and we still need a way to track bytes in flight and UNA actually does a better job than some bytesinflight var so gonna roll with UNA for now. TODO: revisit question after mstone2
-	una uint32			/* earliest-sent, but still un-ACKed byte */ //maybe use later? Ben: if we're going to enqueue in-flight with some data structure, no need TODO: revisit question after mstone2
 	otherSideWindow uint16 	/* the amount which the other's recv buf (NOT OURS, the OTHER party we are connected with) can receive. used in handlePureAck() */
 	
 	/* channels */
@@ -167,7 +166,7 @@ type RecvBuf struct {
 	nxt uint32		/* next sequence num expected */
 
 	/* min heap for early arrivals */
-	earlyArrivals *EarlyArrivals // TODO: nit but i think this makes more sense at the conn level but thats just nitpick oop design
+	earlyArrivals *EarlyArrivals
 
 	/* channels */
 	dataToRead chan struct {}
@@ -213,7 +212,6 @@ type RetransmissionEntry struct {
 
 type RetransmissionQueue struct {
 	mu sync.Mutex 					// since we might be sending + getting ack concurrently
-	head uint32 					// TODO: might not be necessary since slice[1:] should be constant...amortized?
 	array []*RetransmissionEntry
 	rto time.Duration				// all times are in MILLISECONDS
 	srtt time.Duration				// used to calculate an updated srtt for each new pureack

@@ -185,14 +185,14 @@ func (tcp *TCPStack) aCommand(port uint16) {
 	/* call VListen to make new Listner socket */
 	listener, err := tcp.VListen(port)
 	if err != nil {
-		fmt.Println("Listen error:", err)
+		fmt.Println("[aCommand] Listen error:", err)
 		return
 	}
 
 	for {
 		_, err := listener.VAccept()
 		if err != nil {
-			fmt.Println("Accept error:", err)
+			fmt.Println("[aCommand] Accept error:", err)
 			return
 		}
 	}
@@ -201,7 +201,7 @@ func (tcp *TCPStack) aCommand(port uint16) {
 func (tcp *TCPStack) cCommand(addr netip.Addr, port uint16) {
     _, err := tcp.VConnect(addr, port)
     if err != nil {
-        fmt.Println("Connect error:", err)
+        fmt.Println("[cCommand] VConnect error:", err)
         return
     }
 }
@@ -210,17 +210,19 @@ func (tcp *TCPStack) cCommand(addr netip.Addr, port uint16) {
 func (tcp *TCPStack) sCommand(socketNum int, data []byte) {
 	socket := tcp.getNormalSocket(socketNum)
 	if socket == nil {
-		fmt.Printf("Cannot send to socket: %d\n", socketNum)
+		fmt.Printf("[sCommand] Cannot send to socket: %d\n", socketNum)
 		return
 	}
 	/* call VWrite */
 	bytesWritten, err := socket.VWrite(data)
 
 	if err == nil {
-		utils.VPrintf("%d bytes written to socket %d\n", bytesWritten, socketNum)
+		// // utils.VPrintf("%d bytes written to socket %d\n", bytesWritten, socketNum)
+		// Spec format:
+		fmt.Printf("Sent %d bytes\n", bytesWritten)
 		return
 	} else {
-		fmt.Printf("VWrite error: %s", err)
+		fmt.Printf("[sCommand] VWrite error: %s", err)
 		return
 	}
 }
@@ -229,17 +231,17 @@ func (tcp *TCPStack) sCommand(socketNum int, data []byte) {
 func (tcp *TCPStack) rCommand(socketNum int, numBytes int) {
 	socket := tcp.getNormalSocket(socketNum)
 	if socket == nil {
-		fmt.Printf("Cannot read from socket: %d\n", socketNum)
+		fmt.Printf("[rCommand] Cannot read from socket: %d\n", socketNum)
 		return
 	}
     buf := make([]byte, numBytes)
     bytesCopied, err := socket.VRead(buf)
     if err != nil {
-        fmt.Printf("VRead error: %s\n", err)
+        fmt.Printf("[rCommand] VRead error: %s\n", err)
         return
     }
 
-    fmt.Printf("Read %d bytes: %s\n", bytesCopied, string(buf[:bytesCopied]))
+    fmt.Printf("Read %d bytes:  %s\n", bytesCopied, string(buf[:bytesCopied]))
 }
 
 /* receive file */
@@ -249,21 +251,21 @@ func (tcp *TCPStack) rfCommand(destFile string, portNum int) {
 	/* create listener */
 	listener, err := tcp.VListen(uint16(portNum))
 	if err != nil {
-		fmt.Println("Listen error:", err)
+		fmt.Println("[rfCommand] Listen error:", err)
 		return
 	}
 
 	/* accept connection */
 	conn, err := listener.VAccept()
 	if err != nil {
-		fmt.Println("Accept error:", err)
+		fmt.Println("[rfCommand] Accept error:", err)
 		return
 	}
 
 	/* make or open file */
 	file, err := os.Create(destFile)
 	if err != nil {
-		fmt.Println("Error creating file: ", err)
+		fmt.Println("[rfCommand] Error creating file: ", err)
 		return
 	}
 
@@ -290,7 +292,7 @@ func (tcp *TCPStack) rfCommand(destFile string, portNum int) {
 			break
 		}
 		if err != nil {
-			fmt.Println("Read error: ", err)
+			fmt.Println("[rfCommand] Read error: ", err)
 			return
 		}
 
@@ -298,7 +300,7 @@ func (tcp *TCPStack) rfCommand(destFile string, portNum int) {
 		if numBytesRead > 0 {
 			_, writeErr := file.Write(buf[:numBytesRead])
 			if writeErr != nil {
-				fmt.Println("File write error: ", writeErr)
+				fmt.Println("[rfCommand] File write error: ", writeErr)
 				return
 			}
 			totalBytesRead += numBytesRead
@@ -320,14 +322,14 @@ func (tcp *TCPStack) sfCommand(srcFile string, addr netip.Addr, portNum int) {
 	/* connect to receiver */
     conn, err := tcp.VConnect(addr, uint16(portNum))
     if err != nil {
-        fmt.Println("Connect error:", err)
+        fmt.Println("[sfCommand] Connect error:", err)
         return
     }
 
 	/* write file */
 	file, err := os.Open(srcFile)
 	if err != nil {
-        fmt.Println("Open file error:", err)
+        fmt.Println("[sfCommand] Open file error:", err)
         return
     }
 	defer file.Close()
@@ -340,17 +342,17 @@ func (tcp *TCPStack) sfCommand(srcFile string, addr netip.Addr, portNum int) {
 		bytesRead, readErr := file.Read(buf)
 
 		if readErr != nil && readErr != io.EOF {
-			fmt.Println("File read error: ", err)
+			fmt.Println("[sfCommand] File read error: ", err)
 			return
 		}
 		if bytesRead > 0 {
 			bytesWritten, writeErr := conn.VWrite(buf[:bytesRead])
 			if writeErr != nil {
-				fmt.Println("VWrite error:", writeErr)
+				fmt.Println("[sfCommand] VWrite error:", writeErr)
                 return
 			}
 			if bytesWritten != bytesRead {
-				fmt.Printf("Error with VWrite: wrote only %d bytes instead of the full %d bytes read\n", bytesWritten, bytesRead)
+				fmt.Printf("[sfCommand] Error with VWrite: wrote only %d bytes instead of the full %d bytes read\n", bytesWritten, bytesRead)
 				return
 			}
 			totalBytesWritten += bytesWritten
@@ -362,10 +364,10 @@ func (tcp *TCPStack) sfCommand(srcFile string, addr netip.Addr, portNum int) {
 		}
 	}
 	fmt.Printf("Sent %d total bytes\n", totalBytesWritten)
-	fmt.Println("[SENDFILE] Finishing writing, closing connection ")
+	utils.VPrintln("[SENDFILE] Finishing writing, closing connection ")
 	err = conn.VClose()
 	if err != nil {
-		fmt.Println("[sfCommand] vclosed called, close error: ", err)
+		fmt.Println("[sfCommand] vclosed called, close error: ", err.Error())
 		return
 	}
 }
@@ -383,11 +385,17 @@ func (tcp *TCPStack) clCommand(socketNum int) {
 
 	if socket.state == LISTEN {
 		if socket.listenSocket != nil {
-			socket.listenSocket.VClose()		
+			err := socket.listenSocket.VClose()
+			if err != nil {
+				fmt.Printf("[VClose] Error in closing listenSocket: %s\n", err.Error())
+			}
 		}
 	} else {
 		if socket.normalSocket != nil {
-			socket.normalSocket.VClose()
+			err := socket.normalSocket.VClose()
+			if err != nil {
+				fmt.Printf("[VClose] Error in closing normalSocket: %s\n", err.Error())
+			}
 		}
 	}
 }

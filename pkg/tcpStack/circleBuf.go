@@ -39,7 +39,7 @@ func (cb *CircleBuf) WriteIntoBuf(seqNum uint32, data []byte) int {
         copy(cb.buf[0:remaining], data[firstChunk:])
     }
 
-    cb.currSize += uint32(len(data)) // TODO: may need to update this line after mstone2
+    cb.currSize += uint32(len(data))
     return len(data)
 }
 

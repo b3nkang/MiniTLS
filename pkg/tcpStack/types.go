@@ -35,7 +35,7 @@ const (
 // for RTO and SRTT calculations
 // initial values taken from slides
 const (
-	RTO_MIN = 1 * time.Second
+	RTO_MIN = 250 * time.Millisecond
 	RTO_MAX = 5 * time.Second
 	RTO_INIT = 1 * time.Second
 				// RFC 6298 (2.1): 

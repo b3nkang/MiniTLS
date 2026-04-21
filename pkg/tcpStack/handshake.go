@@ -15,7 +15,7 @@ func (entry *SocketTableEntry) sendSyn() error {
 		SrcPort:       entry.localPort,
 		DstPort:       entry.destPort,
 		SeqNum:        entry.seqNum,
-		DataOffset:    20, 			/* TODO: I have no idea what this is */
+		DataOffset:    20,
 		Flags:         header.TCPFlagSyn,
 		WindowSize:    MAX_WIN_SIZE,
 		Checksum:      0,
@@ -163,7 +163,6 @@ func (tcp *TCPStack) handleSynAck(tableEntry *SocketTableEntry, tcpHeader header
 	sendBuf.mu.Unlock()
 
 	tableEntry.normalSocket.retransQueue = &RetransmissionQueue{
-		head: 0,
 		array: make([]*RetransmissionEntry, 0), // let grow dyna,ically with append
 		rto: RTO_INIT, // refer to types comment
 		// other fields can be null for now
@@ -179,11 +178,11 @@ func (tcp *TCPStack) handleSynAck(tableEntry *SocketTableEntry, tcpHeader header
 
 func (entry *SocketTableEntry) sendAckHandshake(passiveSeqNum uint32) error {
 	tcpHdr := &header.TCPFields{
-		SrcPort:       entry.localPort, // TODO: dir should be right but verify some other time
+		SrcPort:       entry.localPort,
 		DstPort:       entry.destPort,
 		SeqNum:        entry.seqNum, // already ++ in handle
 		AckNum:        passiveSeqNum+1, 	/* Ack should be whatever we got from SYN + 1 */
-		DataOffset:    20, 			/* TODO: same as other instances */
+		DataOffset:    20,
 		Flags:         header.TCPFlagAck,
 		WindowSize:    MAX_WIN_SIZE,
 		Checksum:      0,
@@ -231,7 +230,6 @@ func (tcp *TCPStack) handleAckHandshake(tableEntry *SocketTableEntry, tcpHeader 
 
 	// init retransqueue, keep all other fields null for now
 	tableEntry.normalSocket.retransQueue = &RetransmissionQueue{
-		head: 0,
 		array: make([]*RetransmissionEntry, 0),
 		rto: RTO_INIT, // refer to types comment
 	}

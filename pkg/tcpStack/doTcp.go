@@ -780,7 +780,6 @@ func (recvBuf *RecvBuf) getAvailableWindow() uint16 {
 
 // highest-level RTO countdown function. calls retransmitSegment if timer expires
 func (entry *SocketTableEntry) startRtoTimer() *time.Timer {
-	// TODO: double check if mutex lock is necessary here. i believe not since this should only be called where mtx is locked
 	return time.AfterFunc(entry.normalSocket.retransQueue.rto, func(){entry.retransmitSegment()})
 }
 
@@ -829,7 +828,6 @@ func (entry *SocketTableEntry) retransmitSegment() error {
 
 	// start the timer again, recursive call
 	retransQueue.timer = entry.startRtoTimer()
-	//	TODO: pretty sure this is expected behavior for it to spin forever waiting for an ack for a retransmission at RTO_MAX in worst case
 	return nil
 }
 

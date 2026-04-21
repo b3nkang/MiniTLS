@@ -22,7 +22,7 @@ const (
 	LAST_ACK
 	FIN_WAIT_2
 	TIME_WAIT
-	ERROR /* just made this for 3-way handshake */
+	ERROR
 )
 
 const (
@@ -30,6 +30,7 @@ const (
 	MAX_SEG_SIZE = 1360  /* 1360 MAX, but we can choose whatever we want */
 	MAX_SEGMENT_LATENCY = 3 /* TODO: should be 2 minutes, but reducing for testing */
 	MAX_RETRANSMISSIONS = 4 /* TODO: change to 10 */
+	HANDSHAKE_TIMEOUT = 2 * time.Second
 )
 
 // for RTO and SRTT calculations
@@ -60,7 +61,8 @@ type SocketTableEntry struct {
 	numSynRetransmissions int
 	numSynAckRetransmissions int
 	handshakeMu 	sync.Mutex
-	
+	handshakeTimer *time.Timer // instead of polling
+
 	/* 4-tuple stuff */
 	localPort 		uint16
 	localIP			netip.Addr

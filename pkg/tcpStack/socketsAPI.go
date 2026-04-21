@@ -119,31 +119,32 @@ func (tcp *TCPStack) VConnect(addr netip.Addr, port uint16) (*VTCPConn, error) {
 
 	/* send SYN */
 	entry.sendSyn()
-	time.Sleep(1 * time.Second) /* wait 2 seconds between retransmission */
+	entry.startSynRetransTimer()
+	// time.Sleep(1 * time.Second) /* wait 2 seconds between retransmission */
 
-	/* retransmit SYN max times or break*/
-	for {
-    	entry.handshakeMu.Lock()
-		synReceived := entry.receivedSyn
-		entry.handshakeMu.Unlock()
-		/* if SYN was sent successfully, break */
-		if synReceived {
-			fmt.Println("syn received, no syn retransmissions")
-			break
-		}
-		time.Sleep(2 * time.Second) /* wait 2 seconds between retransmission */
-		/* timeout if reached max retransmissions */
-		if entry.numSynRetransmissions >= MAX_RETRANSMISSIONS {
-			entry.state = CLOSED
-			close(entry.establishedChan)
-			entry.removeSelf(entry.socketID)
-			return nil, errors.New("Connection timed out")
-		}
-		/* otherwise, resend SYN */
-		entry.numSynRetransmissions += 1
-		fmt.Printf("retransmitting SYN for the %d time\n", entry.numSynRetransmissions)
-		entry.sendSyn()
-	}
+	// /* retransmit SYN max times or break*/
+	// for {
+    // 	entry.handshakeMu.Lock()
+	// 	synReceived := entry.receivedSyn
+	// 	entry.handshakeMu.Unlock()
+	// 	/* if SYN was sent successfully, break */
+	// 	if synReceived {
+	// 		fmt.Println("syn received, no syn retransmissions")
+	// 		break
+	// 	}
+	// 	time.Sleep(2 * time.Second) /* wait 2 seconds between retransmission */
+	// 	/* timeout if reached max retransmissions */
+	// 	if entry.numSynRetransmissions >= MAX_RETRANSMISSIONS {
+	// 		entry.state = CLOSED
+	// 		close(entry.establishedChan)
+	// 		entry.removeSelf(entry.socketID)
+	// 		return nil, errors.New("Connection timed out")
+	// 	}
+	// 	/* otherwise, resend SYN */
+	// 	entry.numSynRetransmissions += 1
+	// 	fmt.Printf("retransmitting SYN for the %d time\n", entry.numSynRetransmissions)
+	// 	entry.sendSyn()
+	// }
 
     // block until state changes
     for {

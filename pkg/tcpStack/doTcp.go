@@ -98,9 +98,15 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 		tcp.handleSyn(socketEntry.listenSocket, tcpHdr, hdr.Dst, hdr.Src)
 		return
 	case SYN_RECEIVED:
-		tcp.handleAckHandshake(socketEntry, tcpHdr)
+		err := tcp.handleAckHandshake(socketEntry, tcpHdr)
+		if err != nil {
+			fmt.Println("Handshake ACK error:", err) 
+		}
 	case SYN_SENT:
-		tcp.handleSynAck(socketEntry, tcpHdr)
+		err := tcp.handleSynAck(socketEntry, tcpHdr)
+		if err != nil {
+			fmt.Println("Handshake SYN-ACK error:", err)
+		}
 	case ESTABLISHED, FIN_WAIT_2, FIN_WAIT_1, CLOSE_WAIT:
 		/* FIN_WAIT_2 is valid here because we can still receive packets */
 		switch {
@@ -108,7 +114,17 @@ func (tcp *TCPStack) HandleTCP(hdr *ipv4header.IPv4Header, payload []byte) {
 		case tcpHdr.Flags & header.TCPFlagFin != 0:
 			socketEntry.handleFin(tcpHdr) /* this will either ACK fin or tell recvBuffer we got FIN early */
 			return
-		/* data ACK */
+
+		// dupe SYNACK after active side already established -> resend final ACK
+		case (tcpHdr.Flags&(header.TCPFlagSyn|header.TCPFlagAck)) == (header.TCPFlagSyn | header.TCPFlagAck) && len(tcpPayload) == 0:
+			fmt.Println("[TCP - HandleTCP] got duplicate SYN-ACK while already established; resending final ACK")
+			err := socketEntry.sendAckHandshake(tcpHdr.SeqNum)
+			if err != nil {
+				fmt.Println("error resending final ACK:", err)
+			} 
+			return
+		
+		/* pure ACK */
 		case tcpHdr.Flags & header.TCPFlagAck != 0 && len(tcpPayload) == 0:
 			if socketEntry.state == FIN_WAIT_2 {
 				fmt.Println("weirdness--we should not be getting an ack in FIN_WAIT_2")

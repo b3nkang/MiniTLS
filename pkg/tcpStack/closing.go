@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"time"
 
+	utils "ip-isabelle-and-ben/pkg/protocol"
+
 	"github.com/google/netstack/tcpip/header"
 )
 
@@ -62,7 +64,7 @@ func (entry *SocketTableEntry) sendFin() {
 	
 	/* unlike acks, we also need to put this on retransmission queue
 		this was NOT sent through sendLoop, so will need to add it manually here */
-	fmt.Println("Adding FIN to retransmission queue")
+	utils.VPrintln("Adding FIN to retransmission queue")
 	segmentRetransEntry := &RetransmissionEntry{
 		seqNum: entry.seqNum,
 		len: 0,
@@ -74,7 +76,7 @@ func (entry *SocketTableEntry) sendFin() {
 	retransQueue.mu.Lock()
 
 	if len(retransQueue.array) == 0 {
-		fmt.Println("[TCP - sendloop] RTO: timer was stopped/set to 0; restarting")
+		utils.VPrintln("[TCP - sendloop] RTO: timer was stopped/set to 0; restarting")
 		retransQueue.timer = entry.startRtoTimer()
 	}
 	retransQueue.array = append(retransQueue.array, segmentRetransEntry)
@@ -109,7 +111,7 @@ func (entry *SocketTableEntry ) handleEarlyFin() {
 
 	/* we have received FIN, check if FIN is our nxt pointer and ACK fin + switch state */
 	if recvBuf.fin == recvBuf.nxt {
-		fmt.Println("FIN seq num is what we expect for next, ACKING FIN and switching state")
+		utils.VPrintln("FIN seq num is what we expect for next, ACKING FIN and switching state")
 		recvBuf.nxt = recvBuf.fin + 1
 		recvBuf.mu.Unlock()
 		/* only send ACK if fin's seq num is expected */
@@ -118,7 +120,7 @@ func (entry *SocketTableEntry ) handleEarlyFin() {
 		/* PASSIVE SIDE */
 		switch entry.state {
 		case ESTABLISHED:
-			fmt.Println("Handled FIN when it arrived early and we are in ESTABLISHED. Entering CLOSE_WAIT")
+			utils.VPrintln("Handled FIN when it arrived early and we are in ESTABLISHED. Entering CLOSE_WAIT")
 			entry.state = CLOSE_WAIT /* wait for app to call close */
 
 			select { // signal to blocked VRead so it can get to CLOSE_WAIT and ret io.EOF
@@ -128,7 +130,7 @@ func (entry *SocketTableEntry ) handleEarlyFin() {
 
 		/* ACTIVE SIDE */
 		case FIN_WAIT_2:
-			fmt.Println("Handled FIN when it arrived early and we are in FIN_WAIT_2. Entering TIME_WAIT")
+			utils.VPrintln("Handled FIN when it arrived early and we are in FIN_WAIT_2. Entering TIME_WAIT")
 			entry.state = TIME_WAIT
 			entry.timeWait()
 		default:
@@ -138,7 +140,7 @@ func (entry *SocketTableEntry ) handleEarlyFin() {
 }
 
 func (entry *SocketTableEntry) handleFin(tcpHdr header.TCPFields) {
-	fmt.Println("entered handleFin function")
+	utils.VPrintln("entered handleFin function")
 	recvBuf := entry.normalSocket.recvBuf
 	/* 	- RECEIVE FIN
 		- send ACK that we got that FIN (ACKnum is that seqNum + 1)
@@ -168,7 +170,7 @@ func (entry *SocketTableEntry) handleFin(tcpHdr header.TCPFields) {
 	/* PASSIVE SIDE */
 	switch entry.state {
 	case ESTABLISHED:
-		fmt.Println("Handled FIN when it arrived on time and we are in ESTABLISHED. Entering CLOSE_WAIT")
+		utils.VPrintln("Handled FIN when it arrived on time and we are in ESTABLISHED. Entering CLOSE_WAIT")
 		entry.state = CLOSE_WAIT /* wait for app to call close */
 
 		select { // signal to blocked VRead so it can get to CLOSE_WAIT and ret io.EOF
@@ -178,7 +180,7 @@ func (entry *SocketTableEntry) handleFin(tcpHdr header.TCPFields) {
 
 	/* ACTIVE SIDE */
 	case FIN_WAIT_2:
-		fmt.Println("Handled FIN when it arrived on time and we are in FIN_WAIT_2. Entering TIME_WAIT")
+		utils.VPrintln("Handled FIN when it arrived on time and we are in FIN_WAIT_2. Entering TIME_WAIT")
 		entry.state = TIME_WAIT
 		entry.timeWait() /* go and wait and then close conn */
 	default:
@@ -205,7 +207,7 @@ func (entry *SocketTableEntry) handleLastAck(){
 /* cleanup all resources associated with this socket -> close channels, remove from TCB, stop
 	goroutines */
 func (entry *SocketTableEntry) teardown() {
-	fmt.Println("[TEARDOWN] entered teardown function, removing entry from table")
+	utils.VPrintln("[TEARDOWN] entered teardown function, removing entry from table")
 	/* close channels */
 	close(entry.normalSocket.packetChan)
 
@@ -213,12 +215,12 @@ func (entry *SocketTableEntry) teardown() {
 	close(entry.normalSocket.sendBuf.dataWrittenToBuf)
 	close(entry.normalSocket.sendBuf.spaceAvailable)
 	entry.normalSocket.sendBuf.mu.Unlock()
-	fmt.Println("Did not deadlock on the sendBuf")
+	// utils.VPrintln("Did not deadlock on the sendBuf")
 
 	entry.normalSocket.recvBuf.mu.Lock()
 	close(entry.normalSocket.recvBuf.dataToRead)
 	entry.normalSocket.recvBuf.mu.Unlock()
-	fmt.Println("Did not deadlock on the recv buf")
+	// utils.VPrintln("Did not deadlock on the recv buf")
 	/* remove self from socketTable */
 	entry.removeSelf(entry.socketID)
 }

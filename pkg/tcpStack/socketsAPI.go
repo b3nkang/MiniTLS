@@ -154,7 +154,7 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 		if spaceInBuf == 0 {
 			/* unlock mutex so buf can be filled */
 			sendBuf.mu.Unlock()
-			fmt.Println("[TCP - VWrite] no space in send buffer, waiting for space to be available")
+			utils.VPrintln("[TCP - VWrite] no space in send buffer, waiting for space to be available")
 			<- sendBuf.spaceAvailable /* block on this channel */
 			continue
 		}
@@ -168,7 +168,7 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 		startOffset := totalBytesWritten
 		endOffset := totalBytesWritten + numBytesToWrite
 
-		fmt.Printf("[TCP - VWrite] send buf size before write: %d\n", sendBuf.cBuf.currSize)
+		utils.VPrintf("[TCP - VWrite] send buf size before write: %d\n", sendBuf.cBuf.currSize)
 
 		sendBuf.cBuf.WriteIntoBuf(sendBuf.lbw+1,data[startOffset:endOffset])
 		start := sendBuf.lbw+1
@@ -177,8 +177,8 @@ func (conn *VTCPConn) VWrite(data []byte) (int, error) {
 
 		sendBuf.mu.Unlock()
 
-		fmt.Printf("[TCP - VWrite] send buf size after write: %d\n",sendBuf.cBuf.currSize)
-		fmt.Printf("[TCP - VWrite] data written to send buf: %q\n",sendBuf.cBuf.SliceFrom(start, uint32(numBytesToWrite)))
+		utils.VPrintf("[TCP - VWrite] send buf size after write: %d\n",sendBuf.cBuf.currSize)
+		utils.VPrintf("[TCP - VWrite] data written to send buf: %q\n",sendBuf.cBuf.SliceFrom(start, uint32(numBytesToWrite)))
 
 		select {
 		case sendBuf.dataWrittenToBuf <- struct{}{}:
@@ -279,7 +279,7 @@ func (conn *VTCPConn) VClose() error {
 	/* this is where we actually send the FIN */
 	if entry.state == ESTABLISHED || entry.state == CLOSE_WAIT {
 		/* wait until send buf is empty before sending FIN */
-		fmt.Println("[VCLOSE] waiting for sendbuf to empty before sending FIN")
+		utils.VPrintln("[VCLOSE] waiting for sendbuf to empty before sending FIN")
 		for {
 			conn.sendBuf.mu.Lock()
 			noneInFlight := conn.sendBuf.nxt <= conn.sendBuf.una

@@ -40,5 +40,11 @@ refhost-loop:
 ourhost-loop:
 	util/vnet_run --host ./vhost --router ./reference/arm64/vrouter loop
 
+ourhost:
+	util/vnet_run --host ./vhost --router ./reference/arm64/vrouter linear-r1h2
+
+ourhost-c:
+	util/vnet_run --host ./vhost --router ./reference/arm64/vrouter linear-r1h2c
+
 net:
 	util/vnet_generate nets/$(NET).json $(NET)

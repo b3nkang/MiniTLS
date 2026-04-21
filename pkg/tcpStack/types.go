@@ -53,6 +53,13 @@ const (
 /* info about 1 socket in table */
 type SocketTableEntry struct {
 	dropForRetrans bool
+
+	/* handshake retransmission */
+	receivedSyn		bool
+	receivedSynAck	bool
+	numSynRetransmissions int
+	numSynAckRetransmissions int
+	handshakeMu 	sync.Mutex
 	
 	/* 4-tuple stuff */
 	localPort 		uint16

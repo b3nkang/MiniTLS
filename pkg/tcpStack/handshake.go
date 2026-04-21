@@ -4,6 +4,7 @@ import (
 	"fmt"
 	utils "ip-isabelle-and-ben/pkg/protocol"
 	"net/netip"
+	"time"
 
 	"github.com/google/netstack/tcpip/header"
 )
@@ -75,6 +76,8 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 		listenSocket: listener,
 		socketID: table.nextID,
 		seqNum: utils.GenerateNewSeq(), /* generate random sequence number here for starting -- PASSIVE SIDE*/
+		receivedSynAck: false,
+		numSynAckRetransmissions: 0,
 	}
 
 	/* set the function here while we have access to tcp stack -- conn will not when it's trying to send */
@@ -92,6 +95,32 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 
 	table.mu.Unlock() /* UNLOCK MUTEX BEFORE SENDING SYNACK */
 	entry.sendSynAck(tcpHeader.SeqNum) /* pass in OTHER SIDE'S sequence num */
+
+	/* retransmit SynAck if it was not received */
+	time.Sleep(2 * time.Second) /* wait 2 seconds between retransmission */
+
+	/* retransmit SYN max times or break*/
+	for {
+    	entry.handshakeMu.Lock()
+		synAckReceived := entry.receivedSynAck
+		entry.handshakeMu.Unlock()
+		/* if SYN was sent successfully, break */
+		if synAckReceived {
+			fmt.Println("syn ack received, no syn ack retransmissions")
+			break
+		}
+		time.Sleep(2 * time.Second) /* wait 2 seconds between retransmission */
+		/* timeout if reached max retransmissions */
+		if entry.numSynAckRetransmissions >= MAX_RETRANSMISSIONS {
+			entry.state = CLOSED
+			entry.removeSelf(entry.socketID)
+			fmt.Println("Connection timed out")
+		}
+		/* otherwise, resend SYN */
+		entry.numSynAckRetransmissions += 1
+		fmt.Printf("retransmitting SYN-ACK for the %d time\n", entry.numSynAckRetransmissions)
+		entry.sendSynAck(tcpHeader.SeqNum)
+	}
 }
 
 
@@ -131,6 +160,11 @@ func (tcp *TCPStack) handleSynAck(tableEntry *SocketTableEntry, tcpHeader header
 		tableEntry.establishedChan <- ERROR // unblock vconnect
 		return fmt.Errorf("flags for handleSynAck do not match expected SYN | ACK")
 	}
+
+	/* tell SYN to stop retransmitting */
+	tableEntry.handshakeMu.Lock()
+	tableEntry.receivedSyn = true
+	tableEntry.handshakeMu.Unlock()
 
 	/* lock table mutex since we are modifying it */
 	table := tcp.socketTable
@@ -219,6 +253,12 @@ func (tcp *TCPStack) handleAckHandshake(tableEntry *SocketTableEntry, tcpHeader 
 	}
 	// if so, update passive side's seqNum in tableentry to be consistent
 	tableEntry.seqNum += 1
+	
+	/* make sure we don't retransmit syn-ack */
+	tableEntry.handshakeMu.Lock()
+	fmt.Println("setting received SynAck to true")
+	tableEntry.receivedSynAck = true
+	tableEntry.handshakeMu.Unlock()
 
 	// return state
 	tableEntry.state = ESTABLISHED

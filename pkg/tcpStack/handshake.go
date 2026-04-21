@@ -96,31 +96,34 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 	table.mu.Unlock() /* UNLOCK MUTEX BEFORE SENDING SYNACK */
 	entry.sendSynAck(tcpHeader.SeqNum) /* pass in OTHER SIDE'S sequence num */
 
-	/* retransmit SynAck if it was not received */
-	time.Sleep(2 * time.Second) /* wait 2 seconds between retransmission */
+	go entry.synAckRetransLoop(tcpHeader.SeqNum)
+}
 
-	/* retransmit SYN max times or break*/
-	for {
-    	entry.handshakeMu.Lock()
-		synAckReceived := entry.receivedSynAck
-		entry.handshakeMu.Unlock()
-		/* if SYN was sent successfully, break */
-		if synAckReceived {
-			fmt.Println("syn ack received, no syn ack retransmissions")
-			break
-		}
-		time.Sleep(2 * time.Second) /* wait 2 seconds between retransmission */
-		/* timeout if reached max retransmissions */
-		if entry.numSynAckRetransmissions >= MAX_RETRANSMISSIONS {
-			entry.state = CLOSED
-			entry.removeSelf(entry.socketID)
-			fmt.Println("Connection timed out")
-		}
-		/* otherwise, resend SYN */
-		entry.numSynAckRetransmissions += 1
-		fmt.Printf("retransmitting SYN-ACK for the %d time\n", entry.numSynAckRetransmissions)
-		entry.sendSynAck(tcpHeader.SeqNum)
-	}
+/* move syn-ack retransmission to new go routine */
+func (entry *SocketTableEntry) synAckRetransLoop(otherSideSeq uint32) {
+    for {
+        time.Sleep(2 * time.Second)
+
+        entry.handshakeMu.Lock()
+        done := entry.receivedSynAck
+        entry.handshakeMu.Unlock()
+        if done {
+            fmt.Println("syn-ack acknowledged, stopping retransmits")
+            return
+        }
+
+        if entry.numSynAckRetransmissions >= MAX_RETRANSMISSIONS {
+            entry.state = CLOSED
+            entry.removeSelf(entry.socketID)
+            fmt.Println("passive-side handshake timed out")
+            return
+        }
+
+        entry.numSynAckRetransmissions++
+        fmt.Printf("retransmitting SYN-ACK for the %d time\n",
+            entry.numSynAckRetransmissions)
+        entry.sendSynAck(otherSideSeq)
+    }
 }
 
 
@@ -241,6 +244,8 @@ func (tcp *TCPStack) handleAckHandshake(tableEntry *SocketTableEntry, tcpHeader 
 		// not an ACK, drop	
 		return nil
 	}
+
+	fmt.Println("received handshake ack")
 
 	// lock
 	table := tcp.socketTable

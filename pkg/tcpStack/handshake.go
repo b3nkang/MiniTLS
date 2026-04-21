@@ -4,6 +4,7 @@ import (
 	"fmt"
 	utils "ip-isabelle-and-ben/pkg/protocol"
 	"net/netip"
+	"time"
 
 	"github.com/google/netstack/tcpip/header"
 )
@@ -75,6 +76,8 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 		listenSocket: listener,
 		socketID: table.nextID,
 		seqNum: utils.GenerateNewSeq(), /* generate random sequence number here for starting -- PASSIVE SIDE*/
+		receivedSynAck: false,
+		numSynAckRetransmissions: 0,
 	}
 
 	/* set the function here while we have access to tcp stack -- conn will not when it's trying to send */
@@ -92,6 +95,7 @@ func (tcp *TCPStack) handleSyn(listener *VTCPListener, tcpHeader header.TCPField
 
 	table.mu.Unlock() /* UNLOCK MUTEX BEFORE SENDING SYNACK */
 	entry.sendSynAck(tcpHeader.SeqNum) /* pass in OTHER SIDE'S sequence num */
+	entry.startSynAckRetransTimer(tcpHeader.SeqNum) 
 }
 
 
@@ -128,9 +132,15 @@ func (tcp *TCPStack) handleSynAck(tableEntry *SocketTableEntry, tcpHeader header
 	synAck := uint8(header.TCPFlagSyn) | uint8(header.TCPFlagAck)
 	if (tcpHeader.Flags & synAck) != synAck {
 		// not a SYN-ACK, drop	
-		tableEntry.establishedChan <- ERROR // unblock vconnect
+		tableEntry.signalConnectResult(ERROR)
 		return fmt.Errorf("flags for handleSynAck do not match expected SYN | ACK")
 	}
+
+	/* tell SYN to stop retransmitting */
+	tableEntry.handshakeMu.Lock()
+	tableEntry.receivedSyn = true
+	tableEntry.handshakeMu.Unlock()
+	tableEntry.stopHandshakeTimer()
 
 	/* lock table mutex since we are modifying it */
 	table := tcp.socketTable
@@ -139,7 +149,7 @@ func (tcp *TCPStack) handleSynAck(tableEntry *SocketTableEntry, tcpHeader header
 	// verify ack has been updated correctly
 	if tcpHeader.AckNum != tableEntry.seqNum+1 { /* ackNum should be OUR sequence number + 1*/
 		table.mu.Unlock()
-		tableEntry.establishedChan <- ERROR // unblock vconnect
+		tableEntry.signalConnectResult(ERROR)
 		return fmt.Errorf("AckNum does not match SeqNum+1; %d != %d", tcpHeader.AckNum, tableEntry.seqNum+1)
 	}
 
@@ -172,7 +182,7 @@ func (tcp *TCPStack) handleSynAck(tableEntry *SocketTableEntry, tcpHeader header
 	tableEntry.sendAckHandshake(tcpHeader.SeqNum) /* passing in THEIR sequence num to ACK */
 	/* set up send and recv buffers for comms */
 
-	tableEntry.establishedChan <- tableEntry.state // unblock vconnnect
+	tableEntry.signalConnectResult(tableEntry.state) // unblock
 	return nil
 }
 
@@ -207,6 +217,8 @@ func (tcp *TCPStack) handleAckHandshake(tableEntry *SocketTableEntry, tcpHeader 
 		return nil
 	}
 
+	fmt.Println("received handshake ack")
+
 	// lock
 	table := tcp.socketTable
 	table.mu.Lock()
@@ -218,6 +230,13 @@ func (tcp *TCPStack) handleAckHandshake(tableEntry *SocketTableEntry, tcpHeader 
 	}
 	// if so, update passive side's seqNum in tableentry to be consistent
 	tableEntry.seqNum += 1
+	
+	/* make sure we don't retransmit syn-ack */
+	tableEntry.handshakeMu.Lock()
+	fmt.Println("setting received SynAck to true")
+	tableEntry.receivedSynAck = true
+	tableEntry.handshakeMu.Unlock()
+	tableEntry.stopHandshakeTimer() 
 
 	// return state
 	tableEntry.state = ESTABLISHED
@@ -240,4 +259,85 @@ func (tcp *TCPStack) handleAckHandshake(tableEntry *SocketTableEntry, tcpHeader 
 	table.listSockets()
 	fmt.Println(">")
 	return nil
+}
+
+func (entry *SocketTableEntry) sendSynRetrans() {
+	entry.handshakeMu.Lock()
+	// if received, no need to retrans
+	if entry.state != SYN_SENT || entry.receivedSyn {
+		entry.handshakeMu.Unlock()
+		return
+	}
+	// if we hit maxTrans, close and remove
+	if entry.numSynRetransmissions >= MAX_RETRANSMISSIONS {
+		entry.state = CLOSED
+		entry.handshakeMu.Unlock()
+
+		entry.removeSelf(entry.socketID)
+		entry.signalConnectResult(ERROR)
+		fmt.Println("senderside handshake timeut")
+		return
+	}
+	entry.numSynRetransmissions++
+	retryNum := entry.numSynRetransmissions
+	entry.handshakeMu.Unlock()
+	fmt.Printf("retransmitting SYN for the %d time\n", retryNum)
+	entry.sendSyn()
+	entry.startSynRetransTimer()
+}
+
+func (entry *SocketTableEntry) sendSynAckRetrans(otherSideSeq uint32) {
+	entry.handshakeMu.Lock()
+	// if last ack received, no need to retrans
+	if entry.state != SYN_RECEIVED || entry.receivedSynAck {
+			entry.handshakeMu.Unlock()
+			return
+		}
+	// if we hit maxTrans, close and remove
+	if entry.numSynAckRetransmissions >= MAX_RETRANSMISSIONS {
+		entry.state = CLOSED
+		entry.handshakeMu.Unlock()
+
+		entry.removeSelf(entry.socketID)
+		fmt.Println("recvrside handshake timeout")
+		return
+	}
+	entry.numSynAckRetransmissions++
+	retryNum := entry.numSynAckRetransmissions
+	entry.handshakeMu.Unlock()
+
+	fmt.Printf("retransmitting SYNACK for the %d time\n", retryNum)
+	entry.sendSynAck(otherSideSeq)
+	entry.startSynAckRetransTimer(otherSideSeq)
+}
+
+func (entry *SocketTableEntry) startSynRetransTimer() {
+	entry.handshakeMu.Lock()
+	entry.handshakeTimer = time.AfterFunc(HANDSHAKE_TIMEOUT, func(){entry.sendSynRetrans()})
+	entry.handshakeMu.Unlock()
+}
+
+func (entry *SocketTableEntry) startSynAckRetransTimer(otherSideSeq uint32) {
+	entry.handshakeMu.Lock()
+	entry.handshakeTimer = time.AfterFunc(HANDSHAKE_TIMEOUT, func(){entry.sendSynAckRetrans(otherSideSeq)})
+	entry.handshakeMu.Unlock()
+}
+
+// nonblocking helper to unblock connect
+func (entry *SocketTableEntry) signalConnectResult(state int) {
+	select {
+	case entry.establishedChan <- state:
+	default:
+	}
+}
+
+// helper to stop timer for handshake retransmissions
+func (entry *SocketTableEntry) stopHandshakeTimer() {
+	entry.handshakeMu.Lock()
+	defer entry.handshakeMu.Unlock()
+
+	if entry.handshakeTimer != nil {
+		entry.handshakeTimer.Stop()
+		entry.handshakeTimer = nil
+	}
 }

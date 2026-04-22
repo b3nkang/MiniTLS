@@ -1,7 +1,6 @@
 package tcpstack
 
 import (
-	"fmt"
 	"time"
 
 	utils "ip-isabelle-and-ben/pkg/protocol"
@@ -109,33 +108,41 @@ func (entry *SocketTableEntry ) handleEarlyFin() {
 		return
 	}
 
-	/* we have received FIN, check if FIN is our nxt pointer and ACK fin + switch state */
-	if recvBuf.fin == recvBuf.nxt {
-		utils.VPrintln("FIN seq num is what we expect for next, ACKING FIN and switching state")
-		recvBuf.nxt = recvBuf.fin + 1
+	// if FIN is still not the next expected seq, just leave quietly
+	if recvBuf.fin != recvBuf.nxt {
 		recvBuf.mu.Unlock()
-		/* only send ACK if fin's seq num is expected */
-		entry.sendPureAck(recvBuf.nxt)
+		return
+	}
 
-		/* PASSIVE SIDE */
-		switch entry.state {
-		case ESTABLISHED:
-			utils.VPrintln("Handled FIN when it arrived early and we are in ESTABLISHED. Entering CLOSE_WAIT")
-			entry.state = CLOSE_WAIT /* wait for app to call close */
+	/* we have received FIN, check if FIN is our nxt pointer and ACK fin + switch state */
+	utils.VPrintln("FIN seq num is what we expect for next, ACKING FIN and switching state")
+	finAckNum := recvBuf.fin + 1 // need bc after unlock there can be race condition
+	recvBuf.nxt = finAckNum
+	recvBuf.fin = 0
+	recvBuf.mu.Unlock()
+	/* only send ACK if fin's seq num is expected */
+	entry.sendPureAck(finAckNum)
 
-			select { // signal to blocked VRead so it can get to CLOSE_WAIT and ret io.EOF
-			case entry.normalSocket.recvBuf.dataToRead <- struct{}{}:
-			default:
-			}
+	/* PASSIVE SIDE */
+	switch entry.state {
+	case ESTABLISHED:
+		utils.VPrintln("Handled FIN when it arrived early and we are in ESTABLISHED. Entering CLOSE_WAIT")
+		entry.state = CLOSE_WAIT /* wait for app to call close */
 
-		/* ACTIVE SIDE */
-		case FIN_WAIT_2:
-			utils.VPrintln("Handled FIN when it arrived early and we are in FIN_WAIT_2. Entering TIME_WAIT")
-			entry.state = TIME_WAIT
-			entry.timeWait()
+		select { // signal to blocked VRead so it can get to CLOSE_WAIT and ret io.EOF
+		case entry.normalSocket.recvBuf.dataToRead <- struct{}{}:
 		default:
-			fmt.Println("error: invalid state in handleEarlyFin")
 		}
+
+	/* ACTIVE SIDE */
+	case FIN_WAIT_1,FIN_WAIT_2:
+		utils.VPrintln("Handled FIN when it arrived early and we are in FIN_WAIT_1/FIN_WAIT_2. Entering TIME_WAIT")
+		entry.state = TIME_WAIT
+		entry.timeWait()
+	case CLOSE_WAIT, LAST_ACK, TIME_WAIT: // duplicate/late FIN-ish case; ignore
+		return
+	default:
+		return
 	}
 }
 
@@ -153,19 +160,30 @@ func (entry *SocketTableEntry) handleFin(tcpHdr header.TCPFields) {
 	if tcpHdr.SeqNum > recvBuf.nxt {
 		recvBuf.mu.Unlock()
 		return
-	} else if tcpHdr.SeqNum != recvBuf.nxt {
-		fmt.Println("Error: weirdness in handleFin because sqnNum was less than RecvBuf.nxt")
+	} 
+	// else if tcpHdr.SeqNum != recvBuf.nxt {
+	// 	fmt.Println("Error: weirdness in handleFin because sqnNum was less than RecvBuf.nxt")
+	// 	recvBuf.mu.Unlock()
+	// 	return
+	// }
+
+	// duplicate/old FIN: ACK again so the other side stops retransmitting FIN
+	if tcpHdr.SeqNum < recvBuf.nxt {
+		ackNum := recvBuf.nxt
 		recvBuf.mu.Unlock()
+		entry.sendPureAck(ackNum)
 		return
 	}
 
 	/* increment recvBuf.nxt -> not sure if we actually need to do this , but we 
 		now know we will never receive more data from the other side */
-	recvBuf.nxt = tcpHdr.SeqNum + 1
+	finAckNum := tcpHdr.SeqNum + 1
+	recvBuf.nxt = finAckNum
+	recvBuf.fin = 0 // consume it now that we are handling it
 	recvBuf.mu.Unlock()
 
 	/* send ACK since we know fin's seq num is expected */
-	entry.sendPureAck(recvBuf.nxt)
+	entry.sendPureAck(finAckNum)
 
 	/* PASSIVE SIDE */
 	switch entry.state {
@@ -179,14 +197,15 @@ func (entry *SocketTableEntry) handleFin(tcpHdr header.TCPFields) {
 		}
 
 	/* ACTIVE SIDE */
-	case FIN_WAIT_2:
-		utils.VPrintln("Handled FIN when it arrived on time and we are in FIN_WAIT_2. Entering TIME_WAIT")
+	case FIN_WAIT_1,FIN_WAIT_2:
+		utils.VPrintln("Handled FIN when it arrived on time and we are in FIN_WAIT_1/FIN_WAIT_2. Entering TIME_WAIT")
 		entry.state = TIME_WAIT
 		entry.timeWait() /* go and wait and then close conn */
+	case CLOSE_WAIT, LAST_ACK, TIME_WAIT: // late duplicate FIN case, ignore
+		return
 	default:
-		fmt.Println("error: invalid state in handleEarlyFin")
+		return
 	}
-
 }
 
 /* called when we recieve FIN and are in FIN_WAIT_2 state -> start timer to wait to close connection and then close it */

@@ -245,3 +245,7 @@ for {
 This drains as many consecutive early arrivals as possible in one shot. After the heap is empty, we check whether a previously stored early FIN can now be processed (i.e., all data before the FIN has arrived).
 
 Our min-heap satisfies Go's `container/heap` interface on `EarlyArrivals`. The `Less` function orders by `startSeq` so that `Peek()` always returns the segment with the smallest (next-expected) sequence number.
+
+## Late Days
+
+0 late days used (final bug fix PR was up prior to deadline and not significant)

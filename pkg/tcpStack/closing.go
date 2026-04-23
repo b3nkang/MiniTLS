@@ -42,14 +42,15 @@ func (entry *SocketTableEntry) sendFin() {
 	tcpHdr := &header.TCPFields{
 		SrcPort:       entry.localPort,
 		DstPort:       entry.destPort,
-		SeqNum:        entry.seqNum, /* = sendBuf.nxt */
-		DataOffset:    20, 			
-		Flags:         header.TCPFlagFin | header.TCPFlagAck, /* ACK always set */
+		SeqNum:        entry.seqNum,
+		AckNum:        entry.normalSocket.recvBuf.nxt,
+		DataOffset:    20,
+		Flags:         header.TCPFlagFin|header.TCPFlagAck,
 		WindowSize:    entry.normalSocket.recvBuf.getAvailableWindow(),
 		Checksum:      0,
 		UrgentPointer: 0,
-	}	
-	
+	}
+
 	/* send using sendTCP */
 	sendReq := &SendRequest{
 		tcpHeader: tcpHdr,

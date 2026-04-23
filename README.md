@@ -248,4 +248,4 @@ Our min-heap satisfies Go's `container/heap` interface on `EarlyArrivals`. The `
 
 ## Late Days
 
-0 late days used (final bug fix PR was up prior to deadline and not significant)
+0 late days used (last bug fix PR was up prior to deadline, and final fix was very small)

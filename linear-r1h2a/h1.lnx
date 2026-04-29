@@ -1,0 +1,15 @@
+# Auto-generated configuration for h1
+
+interface if0 12.0.0.1/24 127.0.1.1:6000 # to network r1-left
+neighbor 12.0.0.2 at 127.0.1.1:6001 via if0 # r1
+
+
+routing static
+
+# Default route
+route 0.0.0.0/0 via 12.0.0.2
+
+
+# Example timing parameters for TCP
+tcp rto-min 1000 # in microseconds
+tcp rto-max 5000000 # in microseconds

@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"ip-isabelle-and-ben/pkg/ipStack"
 	"ip-isabelle-and-ben/pkg/protocol"
-	tcpstack "ip-isabelle-and-ben/pkg/tcpStack"
+	"ip-isabelle-and-ben/pkg/tcpStack"
+	"ip-isabelle-and-ben/pkg/tlsStack"
 
 	"os"
 )
@@ -37,11 +38,16 @@ func main() {
 	go ipStack.RunIPLayer()
 
 	/* init TCP stuff */
-	tcpStack := tcpstack.InitTCPStack(ipStack)
+	tcpStack := tcpStack.InitTCPStack(ipStack)
 	/* register handler to deal with TCP messages */
 	ipStack.RegisterRecvHandler(6, tcpStack.HandleTCP)
 
-	go tcpStack.HandleREPLCommands()
+	// init TLS
+	tlsStack := tlsStack.InitVTLSStack(tcpStack, ipStack.TlsReplChan)
+
+	go tcpStack.HandleTcpReplCommands()
+	go tlsStack.HandleTlsReplCommands()
+
 	/* start REPL -- runs forever so needs to be last*/
 	ipStack.StartREPL()
 }

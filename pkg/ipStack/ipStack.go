@@ -27,7 +27,8 @@ func InitIPStackFromConfig(fileName string)(*IPStack, error) {
 		ForwardingTable: make(map[netip.Prefix]*FwdEntry, 0),
 		IncomingPacketChan: make(chan []byte, 100),
 		recvHandlers: make(map[int]ReceiveHandler),
-		TCPReplChan: make(chan string, 5),
+		TcpReplChan: make(chan string, 5),
+		TlsReplChan: make(chan string, 5),
 	}
 
 	/* initialize structs within this IPStack */

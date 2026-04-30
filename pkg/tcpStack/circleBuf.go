@@ -1,4 +1,4 @@
-package tcpstack
+package tcpStack
 
 func NewCircleBuf(maxSize uint32, baseSeq uint32) *CircleBuf {
     return &CircleBuf {

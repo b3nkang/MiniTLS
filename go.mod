@@ -1,12 +1,13 @@
 module ip-isabelle-and-ben
 
-go 1.21
+go 1.25.0
 
 require (
 	github.com/brown-csci1680/iptcp-headers v0.0.0-20230924161227-ebbbbba41fe3
 	github.com/google/netstack v0.0.0-20191123085552-55fcc16cd0eb
 	github.com/olekukonko/tablewriter v1.1.3
 	github.com/pkg/errors v0.9.1
+	golang.org/x/crypto v0.50.0
 )
 
 require (
@@ -21,5 +22,5 @@ require (
 	github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 // indirect
 	github.com/olekukonko/errors v1.1.0 // indirect
 	github.com/olekukonko/ll v0.1.4-0.20260115111900-9e59c2286df0 // indirect
-	golang.org/x/sys v0.29.0 // indirect
+	golang.org/x/sys v0.43.0 // indirect
 )

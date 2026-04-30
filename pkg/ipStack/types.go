@@ -23,7 +23,8 @@ type IPStack struct {
 	mu 					sync.Mutex 					/* protect forwarding table */
 	recvHandlers 		map[int]ReceiveHandler		/* deal with receiving packets */
 
-	TCPReplChan			chan string			/* for passing REPL commands to TCP stack */
+	TcpReplChan			chan string			/* for passing REPL commands to TCP stack */
+	TlsReplChan 		chan string			/* for passing REPL commands to TLS stack */
 }
 
 /*

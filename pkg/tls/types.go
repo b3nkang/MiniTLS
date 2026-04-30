@@ -3,7 +3,7 @@ package tls
 import (
 	"crypto/ed25519"
 
-	"ip-isabelle-and-ben/pkg/tcpstack"
+	"ip-isabelle-and-ben/pkg/tcpStack"
 )
 
 const (
@@ -13,7 +13,7 @@ const (
 )
 
 type VTLSConn struct {
-    tcpConn *tcpstack.VTCPConn
+    tcpConn *tcpStack.VTCPConn
 
     readKey  []byte // derived sk for reading msgs
     writeKey []byte // derived sk for sending msgs
@@ -23,7 +23,7 @@ type VTLSConn struct {
 }
 
 type VTLSListener struct {
-    tcpListener *tcpstack.VTCPListener
+    tcpListener *tcpStack.VTCPListener
     signKey     ed25519.PrivateKey
 }
 

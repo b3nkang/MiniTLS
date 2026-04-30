@@ -1,16 +1,42 @@
-package tls
+package tlsStack
 
 import (
 	"crypto/ecdh"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
-	"ip-isabelle-and-ben/pkg/tcpStack"
 
 	"golang.org/x/crypto/hkdf"
 )
+
+// -------------------------- Bootstrapping ----------------------------
+
+func LoadTestTlsConfigs() (VTLSClientConfig, VTLSServerConfig) {
+	userSeed := sha256.Sum256([]byte("minitls test user signing key"))
+	serverSeed := sha256.Sum256([]byte("minitls test server signing key"))
+
+	userPriv := ed25519.NewKeyFromSeed(userSeed[:])
+	serverPriv := ed25519.NewKeyFromSeed(serverSeed[:])
+
+	userPub := userPriv.Public().(ed25519.PublicKey)
+	serverPub := serverPriv.Public().(ed25519.PublicKey)
+
+	clientConfig := VTLSClientConfig{
+		UserSignKey:     userPriv,
+		ServerVerifyKey: serverPub,
+	}
+
+	serverConfig := VTLSServerConfig{
+		ServerSignKey: serverPriv,
+		UserVerifyKey: userPub,
+	}
+
+	return clientConfig, serverConfig
+}
+
 
 // -------------------------- CRYPTO HELPERS ----------------------------
 
@@ -119,103 +145,11 @@ func DeriveWriteKeys(
 	return clientWriteKey, serverWriteKey, nil
 }
 
-// -------------------------- TCP MESSAGE HELPERS ----------------------------
+func (c *VTLSConn) PrintHandshakeDebug(role string) {
+	readHash := sha256.Sum256(c.readKey)
+	writeHash := sha256.Sum256(c.writeKey)
 
-// WriteSerializableMessage serializes msg and writes all bytes to the underlying TCP conn.
-func WriteSerializableMessage(tcpConn *tcpStack.VTCPConn, msg Serializable) error {
-	if tcpConn == nil {
-		return errors.New("WriteSerializableMessage: nil tcpConn")
-	}
-	if msg == nil {
-		return errors.New("WriteSerializableMessage: nil msg")
-	}
-
-	data, err := msg.Serialize()
-	if err != nil {
-		return err
-	}
-
-	return WriteFull(tcpConn, data)
-}
-
-// ReadSerializedMessage reads exactly one serialized handshake message from TCP.
-//
-// Since your messages are fixed-size and begin with a 1-byte type field, we first
-// read the message type, then read the remaining number of bytes for that type.
-func ReadSerializedMessage(tcpConn *tcpStack.VTCPConn) ([]byte, error) {
-	if tcpConn == nil {
-		return nil, errors.New("ReadSerializedMessage: nil tcpConn")
-	}
-
-	typeBuf := make([]byte, 1)
-	if err := ReadFull(tcpConn, typeBuf); err != nil {
-		return nil, err
-	}
-
-	msgType := typeBuf[0]
-
-	var remainingLen int
-
-	switch msgType {
-	case MessageType_UserToServer_DHPublicValue_Message:
-		remainingLen = X25519PublicKeyLen
-
-	case MessageType_ServerToUser_DHPublicValue_Message:
-		remainingLen = X25519PublicKeyLen + X25519PublicKeyLen + Ed25519SignatureLen
-
-	case MessageType_UserToServer_DHSignature_Message:
-		remainingLen = X25519PublicKeyLen + X25519PublicKeyLen + Ed25519SignatureLen
-
-	default:
-		return nil, fmt.Errorf("ReadSerializedMessage: unknown message type: %d", msgType)
-	}
-
-	body := make([]byte, remainingLen)
-	if err := ReadFull(tcpConn, body); err != nil {
-		return nil, err
-	}
-
-	data := make([]byte, 0, 1+remainingLen)
-	data = append(data, typeBuf...)
-	data = append(data, body...)
-
-	return data, nil
-}
-
-// ReadFull repeatedly calls VRead until exactly len(buf) bytes are filled.
-func ReadFull(tcpConn *tcpStack.VTCPConn, buf []byte) error {
-	total := 0
-
-	for total < len(buf) {
-		n, err := tcpConn.VRead(buf[total:])
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return io.ErrUnexpectedEOF
-		}
-
-		total += n
-	}
-
-	return nil
-}
-
-// WriteFull repeatedly calls VWrite until all bytes are written.
-func WriteFull(tcpConn *tcpStack.VTCPConn, data []byte) error {
-	total := 0
-
-	for total < len(data) {
-		n, err := tcpConn.VWrite(data[total:])
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return io.ErrShortWrite
-		}
-
-		total += n
-	}
-
-	return nil
+	fmt.Printf("[TLS %s] handshake complete\n", role)
+	fmt.Printf("[TLS %s] readKey hash:  %x\n", role, readHash[:8])
+	fmt.Printf("[TLS %s] writeKey hash: %x\n", role, writeHash[:8])
 }

@@ -14,9 +14,9 @@ import (
 )
 
 /* deal with REPL commands from IP REPL */
-func (tcp *TCPStack) HandleREPLCommands() {
+func (tcp *TCPStack) HandleTcpReplCommands() {
 	/* this blocks on channel waiting for commands */
-	for cmd := range tcp.ipStack.TCPReplChan {
+	for cmd := range tcp.ipStack.TcpReplChan {
 		parts := strings.Split(cmd, " ")
 		switch parts[0] {
 

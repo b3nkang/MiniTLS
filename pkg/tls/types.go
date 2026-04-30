@@ -1,4 +1,4 @@
-package tls
+package tlsStack
 
 import (
 	"crypto/ed25519"
@@ -12,6 +12,13 @@ const (
     AESGCMKeyLen = 32
 )
 
+// -------------------------- TLS STACK / API TYPES ----------------------------
+
+type VTLSStack struct {
+	tcpStack *tcpStack.TCPStack
+	TlsReplChan chan string
+}
+
 type VTLSConn struct {
     tcpConn *tcpStack.VTCPConn
 
@@ -23,10 +30,21 @@ type VTLSConn struct {
 }
 
 type VTLSListener struct {
-    tcpListener *tcpStack.VTCPListener
-    signKey     ed25519.PrivateKey
+	tcpListener *tcpStack.VTCPListener
+
+	serverSignKey ed25519.PrivateKey
+	userVerifyKey ed25519.PublicKey
 }
 
+type VTLSClientConfig struct {
+	UserSignKey    ed25519.PrivateKey
+	ServerVerifyKey ed25519.PublicKey
+}
+
+type VTLSServerConfig struct {
+	ServerSignKey ed25519.PrivateKey
+	UserVerifyKey ed25519.PublicKey
+}
 
 // -------------------------- MESSAGES ----------------------------
 

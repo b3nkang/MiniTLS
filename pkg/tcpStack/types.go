@@ -1,4 +1,4 @@
-package tcpstack
+package tcpStack
 
 import (
 	"ip-isabelle-and-ben/pkg/ipStack"

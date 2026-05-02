@@ -1,6 +1,7 @@
 package tlsStack
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -11,8 +12,40 @@ func InitVTLSStack(tcp *tcpStack.TCPStack, replChan chan string) *VTLSStack {
 	return &VTLSStack{
 		tcpStack:     tcp,
 		TlsReplChan:  replChan,
+		tlsConnMap:   make(map[int]*VTLSConn), /* map to store conns */
 	}
 }
+
+/* 
+Post-handshake: sending messages
+- both sides have write and read key (32-byte AES-256-GCM keys)
+	- preserves confidentiality + integry (contains 16-byte authentication tag alongside cyphertext)
+	- reader verifies tag before reading message to ensure message not tampered with or falsified
+		- protects against attacker flipping bits in cypertext, etc
+
+- nonce (number used once)
+	- 12-byte value used each time you encrypt with the same key that has to be different
+		- writeSeq and readSeq
+		- start at 0 and increment by 1 each message
+
+- writing data:
+	1. get nonce
+		- make writeSeq an 8-byte integer and pad to get 12 bytes
+	2. use cipher.AEAD.Seal to encrypt message with writeKey
+	3. create bytes to send
+	4. call WriteFull to write to TCP
+	5. increment writeSeq
+
+- reading data:
+	1. knowing we got a Record, first read length (ReadFull for 4 bytes)
+	2. read Record ciphertext + authTag
+	3. get nonce via same method as write
+	4. decrypt message via cipher.AEAD.Open (pass in readKey + nonce)
+		- atomically: verifies auth tag. returns error if wrong
+		- then returns plaintext if everything works
+	5. inrement readSeq
+
+*/
 
 // -------------------------- TCP MESSAGE HELPERS ----------------------------
 
@@ -113,4 +146,11 @@ func WriteFull(tcpConn *tcpStack.VTCPConn, data []byte) error {
 	}
 
 	return nil
+}
+
+/* convert nonce into expected 12-byte array format */
+func getNonce(seq uint64) []byte {
+	nonce := make([]byte, 12)
+	binary.BigEndian.PutUint64(nonce[4:], seq)
+	return nonce
 }

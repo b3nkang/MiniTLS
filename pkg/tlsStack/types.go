@@ -2,6 +2,7 @@ package tlsStack
 
 import (
 	"crypto/ed25519"
+	"sync"
 
 	"ip-isabelle-and-ben/pkg/tcpStack"
 )
@@ -10,13 +11,34 @@ const (
     X25519PublicKeyLen = 32
     Ed25519SignatureLen = 64
     AESGCMKeyLen = 32
+	AESGCMTagLen = 16
 )
+
+/* Represent states
+iota = use increasing numbers */
+const (
+    CLOSED = iota
+    LISTEN
+    SYN_SENT
+    SYN_RECEIVED
+    ESTABLISHED
+	FIN_WAIT_1
+	CLOSE_WAIT
+	LAST_ACK
+	FIN_WAIT_2
+	TIME_WAIT
+	ERROR
+)
+
 
 // -------------------------- TLS STACK / API TYPES ----------------------------
 
 type VTLSStack struct {
 	tcpStack *tcpStack.TCPStack
 	TlsReplChan chan string
+	tlsConnMap	map[int]*VTLSConn 	/* map tlsID to conn */
+	connMu		sync.Mutex			/* protect map */
+	nextID		int					/* keep track of IDs */
 }
 
 type VTLSConn struct {
@@ -27,6 +49,8 @@ type VTLSConn struct {
 
     readSeq  uint64 // seqNum used to generate nonce to check AES_GCP enc/decryption
     writeSeq uint64
+
+	readBuf []byte /* hold decrypted and received bytes until read by repl */
 }
 
 type VTLSListener struct {

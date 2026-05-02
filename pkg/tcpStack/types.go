@@ -228,3 +228,28 @@ type RetransmissionQueue struct {
 }
 
 
+
+/* --------------- FOR TLSS -------------------*/
+
+/* for sharing with TLS conn to avoid exposing entire socket table */
+type ConnInfo struct {
+    SocketID  int
+    LocalIP   netip.Addr
+    LocalPort uint16
+    RemoteIP  netip.Addr
+    RemotePort uint16
+    State     int
+}
+
+
+func (c *VTCPConn) GetInfo() ConnInfo {
+    e := c.socketEntry
+    return ConnInfo{
+        SocketID:   e.socketID,
+        LocalIP:    e.localIP,
+        LocalPort:  e.localPort,
+        RemoteIP:   e.destIP,
+        RemotePort: e.destPort,
+        State:      e.state,
+    }
+}

@@ -256,7 +256,7 @@ func (tcp *TCPStack) handleAckHandshake(tableEntry *SocketTableEntry, tcpHeader 
 
 	table.mu.Unlock() /* UNLOCK MUTEX BEFORE PASSING SOCKET */
 	tableEntry.listenSocket.connChan <- tableEntry.normalSocket // unblock vconnnect
-	table.listSockets()
+	// table.listSockets()
 	fmt.Println(">")
 	return nil
 }

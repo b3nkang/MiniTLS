@@ -54,7 +54,7 @@ func (tcp *TCPStack) VListen(port uint16) (*VTCPListener, error) {
 	tcp.socketTable.socketMap[tableEntry.socketID] = tableEntry
 	fmt.Printf("Listening on Port: %d, SocketID: %d\n",
 				tableEntry.localPort, tableEntry.socketID)
-	tcp.socketTable.listSockets()
+	// tcp.socketTable.listSockets()
 	return listener, nil
 }
 

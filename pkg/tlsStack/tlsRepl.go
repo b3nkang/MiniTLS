@@ -34,6 +34,8 @@ func (tls *VTLSStack) HandleTlsReplCommands() {
 			tls.handleTlsR(parts)
 		case "tlsls":
 			tls.handleTlsLS()
+		case "tlscl":
+			tls.handleTlsCl(parts)
 		default:
 			fmt.Println("Unknown TLS command")
 		}
@@ -199,6 +201,37 @@ func (tls *VTLSStack) handleTlsR(parts []string) {
         }
         fmt.Printf("[tlsr] read %d bytes: %s\n", n, string(buf[:n]))
     }()
+}
+
+/* close TLS connection */
+func (tls *VTLSStack) handleTlsCl(parts []string) {
+	if len(parts) != 2 {
+        fmt.Println("Usage: tlscl <connID>")
+        return	
+	}
+    id, err := strconv.Atoi(parts[1])
+    if err != nil {
+        fmt.Println("connID must be an integer")
+        return
+    }
+
+    conn := tls.getConn(id)
+    if conn == nil {
+        fmt.Printf("[tlscl] no TLS connection with ID %d\n", id)
+        return
+    }
+	/* call VClose() (tcp) */
+    if err := conn.VTLSClose(); err != nil {
+        fmt.Printf("[tlscl] close error: %v\n", err)
+        return
+    }
+
+	/* remove conn from tls table */
+	tls.connMu.Lock()
+    delete(tls.tlsConnMap, id)
+    tls.connMu.Unlock()
+
+	fmt.Printf("[tlscl] closed TLS connection %d\n", id)
 }
 
 /* list tls sockets using TLS socket table and TCP socket table info */

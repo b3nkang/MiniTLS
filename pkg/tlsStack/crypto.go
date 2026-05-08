@@ -1,6 +1,8 @@
 package tlsStack
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -152,4 +154,50 @@ func (c *VTLSConn) PrintHandshakeDebug(role string) {
 	fmt.Printf("[TLS %s] handshake complete\n", role)
 	fmt.Printf("[TLS %s] readKey hash:  %x\n", role, readHash[:8])
 	fmt.Printf("[TLS %s] writeKey hash: %x\n", role, writeHash[:8])
+}
+
+/* build nonce, create ciphertext, and call Seal to return ciphertext || auth */
+func (c *VTLSConn) SealData(plaintext []byte) ([]byte, error) {
+	nonce := getNonce(c.writeSeq)
+
+	/* create new cipher block -- knows how to encrypt chunks of data */
+	block, err := aes.NewCipher(c.writeKey)
+	if err != nil {
+		return nil, err
+	}
+
+	/* returns cipher.AEAD -> Authenticated Encryption with Assoicated Data 
+		object we use to encrypt data */
+	gcm, err := cipher.NewGCM(block)
+    if err != nil {
+        return nil, err
+    }
+
+	/* encrypt data and append auth */
+	sealedData := gcm.Seal(nil, nonce, plaintext, nil)
+	
+	return sealedData, nil
+}
+
+func (c *VTLSConn) OpenData(sealedData []byte) ([]byte, error) {
+	nonce := getNonce(c.readSeq)
+
+	/* create new cipher block -- knows how to encrypt chunks of data */
+	block, err := aes.NewCipher(c.readKey)
+	if err != nil {
+		return nil, err
+	}
+
+	/* returns cipher.AEAD -> Authenticated Encryption with Assoicated Data 
+		object we use to encrypt data */
+	gcm, err := cipher.NewGCM(block)
+    if err != nil {
+        return nil, err
+    }
+
+	plaintext, err := gcm.Open(nil, nonce, sealedData, nil)
+	if err != nil {
+		return nil, fmt.Errorf("VTLSRead: decryption/auth failed: %w", err)
+	}
+	return plaintext, nil
 }

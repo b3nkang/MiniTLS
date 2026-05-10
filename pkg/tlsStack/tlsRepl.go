@@ -2,6 +2,7 @@ package tlsStack
 
 import (
 	"fmt"
+	"io"
 	"net/netip"
 	"os"
 	"strconv"
@@ -12,8 +13,12 @@ import (
 
 // usage:
 //
-//	tlsa <port>
-//	tlsc <ip> <port>
+//		tlsa <port>
+//		tlsc <ip> <port>
+//		tlss <connID> <message>
+//	 tlsr <connID> <numBytesToRead>¸
+//		tlssf <srcFilePath> <ip> <port>
+//		tlsrf <destFilePath> <port>
 func (tls *VTLSStack) HandleTlsReplCommands() {
 	for cmd := range tls.TlsReplChan {
 		parts := strings.Fields(cmd)
@@ -29,9 +34,13 @@ func (tls *VTLSStack) HandleTlsReplCommands() {
 		case "tlsc":
 			tls.handleTlsC(parts, clientConfig)
 		case "tlss":
-			tls.handleTlsS(parts)
+			tls.handleTlsS(cmd)
 		case "tlsr":
 			tls.handleTlsR(parts)
+		case "tlssf":
+			tls.handleTlsSF(parts, clientConfig)
+		case "tlsrf":
+			tls.handleTlsRF(parts, serverConfig)
 		case "tlsls":
 			tls.handleTlsLS()
 		case "tlscl":
@@ -137,12 +146,164 @@ func (tls *VTLSStack) handleTlsC(parts []string, clientConfig VTLSClientConfig) 
 	}()
 }
 
-/* send bytes via tls (put in ID + bytes to send) */
-func (tls *VTLSStack) handleTlsS(parts []string) {
+// tlssf <srcFilePath> <vip> <port>
+//
+// TLS equivalent of TCP's "sf" command.
+func (tls *VTLSStack) handleTlsSF(parts []string, clientConfig VTLSClientConfig) {
+	if len(parts) != 4 {
+		fmt.Println("Usage: tlssf <srcFilePath> <Receiver IP> <Receiver PortNum>")
+		return
+	}
+
+	addr, err := netip.ParseAddr(parts[2])
+	if err != nil {
+		fmt.Println("Invalid IP Format:", parts[2])
+		return
+	}
+
+	portInt, err := strconv.Atoi(parts[3])
+	if err != nil {
+		fmt.Println("Port must be an integer")
+		return
+	}
+	if portInt < 0 || portInt > 65535 {
+		fmt.Println("Port must be a number 0-65535")
+		return
+	}
+
+	go tls.tlsSFCommand(parts[1], addr, uint16(portInt), clientConfig)
+}
+
+func (tls *VTLSStack) tlsSFCommand(srcFile string, addr netip.Addr, port uint16, clientConfig VTLSClientConfig) {
+	conn, err := tls.VTLSDial(addr, port, clientConfig)
+	if err != nil {
+		fmt.Println("[tlssf] dial/handshake error:", err)
+		return
+	}
+	defer conn.VTLSClose()
+
+	file, err := os.Open(srcFile)
+	if err != nil {
+		fmt.Println("[tlssf] open file error:", err)
+		return
+	}
+	defer file.Close()
+
+	buf := make([]byte, 4096)
+	totalBytesWritten := 0
+
+	for {
+		bytesRead, readErr := file.Read(buf)
+		if readErr != nil && readErr != io.EOF {
+			fmt.Println("[tlssf] file read error:", readErr)
+			return
+		}
+
+		if bytesRead > 0 {
+			bytesWritten, writeErr := conn.VTLSWrite(buf[:bytesRead])
+			if writeErr != nil {
+				fmt.Println("[tlssf] VTLSWrite error:", writeErr)
+				return
+			}
+			if bytesWritten != bytesRead {
+				fmt.Printf("[tlssf] short VTLSWrite: wrote %d bytes instead of %d\n", bytesWritten, bytesRead)
+				return
+			}
+			totalBytesWritten += bytesWritten
+		}
+
+		if readErr == io.EOF {
+			break
+		}
+	}
+
+	fmt.Printf("[tlssf] TLS sent %d total bytes\n", totalBytesWritten)
+}
+
+// tlsrf <destFilePath> <port>
+//
+// TLS equivalent of TCP's "rf" command.
+func (tls *VTLSStack) handleTlsRF(parts []string, serverConfig VTLSServerConfig) {
 	if len(parts) != 3 {
-        fmt.Println("Usage: tlss <connID> <message>")
-        return
-    }
+		fmt.Println("Usage: tlsrf <destFilePath> <port>")
+		return
+	}
+
+	portInt, err := strconv.Atoi(parts[2])
+	if err != nil {
+		fmt.Println("Port must be an integer")
+		return
+	}
+	if portInt < 0 || portInt > 65535 {
+		fmt.Println("Port must be a number 0-65535")
+		return
+	}
+
+	go tls.tlsRFCommand(parts[1], uint16(portInt), serverConfig)
+}
+
+func (tls *VTLSStack) tlsRFCommand(destFile string, port uint16, serverConfig VTLSServerConfig) {
+	listener, err := tls.VTLSListen(port, serverConfig)
+	if err != nil {
+		fmt.Println("[tlsrf] listen error:", err)
+		return
+	}
+	defer listener.tcpListener.VClose()
+
+	conn, err := listener.VTLSAccept()
+	if err != nil {
+		fmt.Println("[tlsrf] accept/handshake error:", err)
+		return
+	}
+	defer conn.VTLSClose()
+
+	file, err := os.Create(destFile)
+	if err != nil {
+		fmt.Println("[tlsrf] error creating file:", err)
+		return
+	}
+	defer file.Close()
+
+	buf := make([]byte, 4096)
+	totalBytesRead := 0
+
+	for {
+		numBytesRead, err := conn.VTLSRead(buf)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			fmt.Println("[tlsrf] VTLSRead error:", err)
+			return
+		}
+
+		if numBytesRead > 0 {
+			if _, err := file.Write(buf[:numBytesRead]); err != nil {
+				fmt.Println("[tlsrf] file write error:", err)
+				return
+			}
+			totalBytesRead += numBytesRead
+		}
+	}
+
+	fmt.Printf("[tlsrf] TLS received %d total bytes\n", totalBytesRead)
+}
+
+/* send bytes via tls (put in ID + bytes to send) */
+func (tls *VTLSStack) handleTlsS(cmd string) {
+	parts := strings.Fields(cmd)
+	if len(parts) < 3 {
+		fmt.Println("Usage: tlss <connID> <message>")
+		return
+	}
+
+	msg := strings.TrimSpace(cmd)
+	msg = strings.TrimLeft(strings.TrimPrefix(msg, parts[0]), " \t")
+	msg = strings.TrimLeft(strings.TrimPrefix(msg, parts[1]), " \t")
+	if msg == "" {
+		fmt.Println("Usage: tlss <connID> <message>")
+		return
+	}
 
     id, err := strconv.Atoi(parts[1])
     if err != nil {
@@ -156,12 +317,13 @@ func (tls *VTLSStack) handleTlsS(parts []string) {
         return
     }
 
-    go func() {
+	go func() {
 		/* calls WriteFull() -> VWrite -> can block, so run in goroutine */
-        n, err := conn.VTLSWrite([]byte(parts[2]))
-        if err != nil {
-            fmt.Println("[tlss] write error:", err)
-            return
+		msg := strings.Join(parts[2:], " ")
+		n, err := conn.VTLSWrite([]byte(msg))
+		if err != nil {
+			fmt.Println("[tlss] write error:", err)
+			return
         }
         fmt.Printf("[tlss] sent %d bytes\n", n)
     }()

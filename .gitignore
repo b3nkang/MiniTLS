@@ -12,5 +12,6 @@
 /vhost
 /router
 /vrouter
+/reference
 
 util/bins_version.txt

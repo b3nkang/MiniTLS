@@ -217,7 +217,7 @@ func (tcp *TCPStack) handleAckHandshake(tableEntry *SocketTableEntry, tcpHeader 
 		return nil
 	}
 
-	fmt.Println("received handshake ack")
+	utils.VPrintf("received handshake ack")
 
 	// lock
 	table := tcp.socketTable
@@ -233,7 +233,7 @@ func (tcp *TCPStack) handleAckHandshake(tableEntry *SocketTableEntry, tcpHeader 
 	
 	/* make sure we don't retransmit syn-ack */
 	tableEntry.handshakeMu.Lock()
-	fmt.Println("setting received SynAck to true")
+	utils.VPrintln("setting received SynAck to true")
 	tableEntry.receivedSynAck = true
 	tableEntry.handshakeMu.Unlock()
 	tableEntry.stopHandshakeTimer() 

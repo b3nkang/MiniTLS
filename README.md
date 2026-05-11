@@ -1,14 +1,10 @@
 # MiniTLS
 
-## Summary
-
 MiniTLS is a lightweight TLS layer over our custom TCP stack that performs authenticated Diffie-Hellman key exchange, derives shared encryption keys, and sends messages or files as encrypted, authenticated records. Cryptographically, the implementation achieves confidentiality, integrity, peer authentication, and protection against impersonation and man-in-the-middle attacks.
 
-## Demo
+https://github.com/user-attachments/assets/99d6d087-dff7-4f38-9d10-22df5e9bf0ab
 
-![Video Demo of TLS](demo.mp4)
-
-## Outline
+## Overview
 
 MiniTLS is our plan to build on top of our TCP layer to implement a lightweight version of the TLS protocol, which prevents various attacks from happening to our packets such as eavesdropping, tampering, impersonation, MitM, replay attacks, and more. While the official TLS protocol (RFC 8846\) is extremely extensive and impractical to implement, our approach will focus on establishing reasonably meaningful cryptographic safeguards for our TCP layer, so that messages have a higher level of security associated with them.
 

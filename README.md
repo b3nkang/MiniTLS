@@ -10,12 +10,12 @@ MiniTLS is our plan to build on top of our TCP layer to implement a lightweight 
 
 The implementation consists largely just of wrappers around our TCP API functions; concretely, this involves two main cryptographic elemetns: authenticated key exchange and encryption/decryption layer. 
 
-Our version of authenticated key exchange does not involve certificates, which we deem out of scope (since we would need to implement an issuing authority also). Instead, we uses ephemeral X25519 Diffie-Hellman to derive a shared secret, then have each side sign the DH public values with pre-shared Ed25519 signing keys. Then, each side verifies the other’s signature with a trusted public key, preventing impersonation/MitM, and both sides derive directional AES-GCM keys from the shared secret using HKDF.
+Our version of authenticated key exchange does not involve certificates, which we deem out of scope (since we would need to implement an issuing authority also). Instead, we use ephemeral X25519 Diffie-Hellman to derive a shared secret, then have each side sign the DH public values with pre-shared Ed25519 signing keys. Then, each side verifies the other’s signature with a trusted public key, preventing impersonation/MitM, and both sides derive directional AES-GCM keys from the shared secret using HKDF.
 
-After the handshake, we implement a small record layer. On write, plaintext is encrypted and authenticated with AES-GCM, length-prefixed, and sent over our existing TCP VWrite path. On read, we reads a full ciphertext from TCP, verify and decrypt, and return plaintext to the TLS layer. Each side uses monotonically increasing sequence numbers to generate unique nonces for AES-GCM ciphers.
+After the handshake, we implement a small record layer. On write, plaintext is encrypted and authenticated with AES-GCM, length-prefixed, and sent over our existing TCP VWrite path. On read, we read a full ciphertext from TCP, verify and decrypt, and return plaintext to the TLS layer. Each side uses monotonically increasing sequence numbers to generate unique nonces for AES-GCM ciphers.
 
-Finally, we exposes a TLS-layer API suite similar to the TCP command flow: `tlsa`/`tlsc` establish authenticated encrypted connections (connect/accept), `tlss`/`tlsr` send and read encrypted messages, and `tlssf`/`tlsrf` send and receive whole files by repeatedly calling the TLS read/write layer.
+Finally, we expose a TLS-layer API suite similar to the TCP command flow: `tlsa`/`tlsc` establish authenticated encrypted connections (connect/accept), `tlss`/`tlsr` send and read encrypted messages, and `tlssf`/`tlsrf` send and receive whole files by repeatedly calling the TLS read/write layer.
 
 ## Tools/Libraries
 
-Our IP and TCP stacks are both written in Go, so the TLS layer is also. We make use of Go’s standard `crypto` library, such as DH utils from `crypto/ecdh`'s `ecdh.X25519()` signatures from `crypto/ed25519`, and enc/auth with `crypto/aes` and `crypto/cipher`.
+Our IP and TCP stacks are both written in Go, so the TLS layer is also. We make use of Go’s standard `crypto` library, such as DH utils from `crypto/ecdh`'s `ecdh.X25519()`, signatures from `crypto/ed25519`, and enc/auth from `crypto/aes` and `crypto/cipher`.
